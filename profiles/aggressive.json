@@ -1,0 +1,9 @@
+{
+  "name": "Aggressive",
+  "description": "Return maksimal, risk lebih tinggi",
+  "MAX_DRAWDOWN_PCT": "20",
+  "TRAILING_STOP_ATR_MULTIPLIER": "1.5",
+  "TIMEFRAME_SHORT": "5m",
+  "TIMEFRAME_MEDIUM": "15m",
+  "TIMEFRAME_LONG": "1h"
+}

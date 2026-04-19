@@ -1,0 +1,9 @@
+{
+  "name": "Conservative",
+  "description": "Proteksi modal, return stabil",
+  "MAX_DRAWDOWN_PCT": "5",
+  "TRAILING_STOP_ATR_MULTIPLIER": "3.0",
+  "TIMEFRAME_SHORT": "1h",
+  "TIMEFRAME_MEDIUM": "4h",
+  "TIMEFRAME_LONG": "1d"
+}
