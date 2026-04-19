@@ -17,7 +17,7 @@ INTERVAL_SECONDS = int(os.getenv("INTERVAL_SECONDS", 3600))
 REFRESH_SECONDS = 60
 
 st.set_page_config(
-    page_title="Trading Bot",
+    page_title="Maffiso Trading Bot",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",

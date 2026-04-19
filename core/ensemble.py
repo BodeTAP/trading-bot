@@ -11,6 +11,7 @@ Weighted sum > +0.3 → BUY, < -0.3 → SELL, else HOLD.
 
 import logging
 import math
+import os
 
 import pandas as pd
 
@@ -103,20 +104,24 @@ def _hmm_model(hmm_state: str | None, hmm_confidence: float | None) -> tuple[str
 def _momentum_model(multi_tf: dict) -> tuple[str, float]:
     """
     Multi-TF price-action score (0–5):
-      +1  price > MA50  (1h)
-      +1  price > MA200 (1h)
-      +1  RSI(1h) < 60  (not yet overbought)
-      +1  RSI(15m) rising vs previous candle
-      +1  4h bias BULLISH  (or -1 if BEARISH, capped at min 0)
+      +1  price > MA50  (medium TF)
+      +1  price > MA200 (medium TF)
+      +1  RSI(medium TF) < 60  (not yet overbought)
+      +1  RSI(short TF) rising vs previous candle
+      +1  long TF bias BULLISH  (or -1 if BEARISH, capped at min 0)
     """
     from core.market_data import _tf_bias   # local import avoids circular dep at module load
 
     score     = 0
     max_score = 5
 
-    df_1h  = multi_tf.get("1h")
-    df_15m = multi_tf.get("15m")
-    df_4h  = multi_tf.get("4h")
+    tf_short  = os.getenv('TIMEFRAME_SHORT',  '15m')
+    tf_medium = os.getenv('TIMEFRAME_MEDIUM', '1h')
+    tf_long   = os.getenv('TIMEFRAME_LONG',   '4h')
+
+    df_1h  = multi_tf.get(tf_medium)
+    df_15m = multi_tf.get(tf_short)
+    df_4h  = multi_tf.get(tf_long)
 
     if df_1h is not None:
         valid_1h = df_1h.dropna(subset=["rsi", "ma50"])

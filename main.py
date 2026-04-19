@@ -38,7 +38,7 @@ TF_SHORT  = os.getenv('TIMEFRAME_SHORT',  '15m')
 TF_MEDIUM = os.getenv('TIMEFRAME_MEDIUM', '1h')
 TF_LONG   = os.getenv('TIMEFRAME_LONG',   '4h')
 
-_TF_TO_SECONDS = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+_TF_TO_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 INTERVAL_SECONDS = int(os.getenv('INTERVAL_SECONDS') or _TF_TO_SECONDS.get(TF_SHORT, 3600))
 
 

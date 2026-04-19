@@ -14,11 +14,10 @@ logger = logging.getLogger(__name__)
 
 _exchange: ccxt.binance | None = None
 
-# Timeframe config: limit = candles to fetch per TF
-TIMEFRAME_CONFIG: dict[str, dict] = {
-    "15m": {"limit": 100, "label": "Short-term momentum"},
-    "1h":  {"limit": 200, "label": "Medium-term trend"},
-    "4h":  {"limit": 100, "label": "Long-term bias"},
+# Candle limits per timeframe (must be ≥200 for MA200 to compute cleanly)
+_TF_LIMIT: dict[str, int] = {
+    "1m": 300, "5m": 250, "15m": 200,
+    "1h": 250, "4h": 200, "1d": 300,
 }
 
 
@@ -66,11 +65,17 @@ def fetch_market_data(pair: str = 'BTC/USDT', timeframe: str = '1h', limit: int 
 
 
 def fetch_multi_timeframe(pair: str = 'BTC/USDT') -> dict[str, pd.DataFrame]:
-    """Fetch 15m, 1h, and 4h candles with indicators for multi-timeframe analysis."""
+    """Fetch short/medium/long timeframe candles based on TIMEFRAME_* env vars."""
+    tf_short  = os.getenv('TIMEFRAME_SHORT',  '15m')
+    tf_medium = os.getenv('TIMEFRAME_MEDIUM', '1h')
+    tf_long   = os.getenv('TIMEFRAME_LONG',   '4h')
+    # deduplicate while preserving order
+    timeframes = list(dict.fromkeys([tf_short, tf_medium, tf_long]))
     result: dict[str, pd.DataFrame] = {}
-    for tf, cfg in TIMEFRAME_CONFIG.items():
+    for tf in timeframes:
+        limit = _TF_LIMIT.get(tf, 250)
         try:
-            result[tf] = fetch_market_data(pair, tf, cfg["limit"])
+            result[tf] = fetch_market_data(pair, tf, limit)
             logger.debug(f"MTF fetch {tf}: {len(result[tf])} candles")
         except Exception as e:
             logger.warning(f"MTF fetch {tf} gagal: {e}")
