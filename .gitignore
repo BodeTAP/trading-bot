@@ -60,5 +60,5 @@ desktop.ini
 # Streamlit
 .streamlit/
 
-# Docs images (placeholder)
-docs/
+# Docs images — tracked, uncomment to ignore large assets
+# docs/

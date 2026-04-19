@@ -10,7 +10,7 @@ Bot trading crypto otomatis yang menggunakan **Claude AI (Anthropic)** sebagai "
 
 > ⚠️ **Bot ini berjalan di Binance Testnet secara default.** Tidak ada uang sungguhan yang dipertaruhkan selama testing.
 
-![Dashboard](docs/dashboard.png)
+> **Dashboard** berjalan di `localhost:8501` — dark theme dengan sidebar health monitor, 5 metric card (portfolio, trades, win rate, drawdown, last action), 4 intel card (HMM state, ensemble signal, regime, fear & greed), equity curve + drawdown chart real-time, tabel keputusan 20 terakhir dengan color coding BUY/SELL/HOLD, performance gauge, dan tab backtesting interaktif.
 
 ---
 
