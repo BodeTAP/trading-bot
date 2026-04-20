@@ -361,6 +361,6 @@ INDIKATOR TEKNIKAL:
 {hmm_section}{regime_section}{ensemble_section}{sentiment_section}{mtf_section}
 STATUS PORTOFOLIO:
 - USDT tersedia: ${portfolio['usdt_available']:,.2f}
-- BTC dipegang: {portfolio['btc_held']:.6f} BTC (≈ ${portfolio['btc_value_usdt']:,.2f})
+- {pair.split('/')[0]} dipegang: {portfolio['btc_held']:.6f} {pair.split('/')[0]} (≈ ${portfolio['btc_value_usdt']:,.2f})
 - Total nilai: ${portfolio['total_value_usdt']:,.2f}
 """, confluence_text
