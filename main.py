@@ -62,6 +62,12 @@ class BotState:
         self.hmm_confidence: float | None   = None
         self.next_session_at: datetime | None = None
         self.df: pd.DataFrame | None        = None
+        # ── Hot-reloadable config ─────────────────────────────────────────────
+        self.pair:      str = os.getenv('TRADING_PAIR', 'BTC/USDT')
+        self.tf_short:  str = os.getenv('TIMEFRAME_SHORT',  '15m')
+        self.tf_medium: str = os.getenv('TIMEFRAME_MEDIUM', '1h')
+        self.tf_long:   str = os.getenv('TIMEFRAME_LONG',   '4h')
+        self.interval:  int = INTERVAL_SECONDS
 
     def is_paused(self) -> bool:
         if self.pause_until and datetime.now() < self.pause_until:
@@ -100,6 +106,46 @@ def run_bot():
     regime_detector   = RegimeDetector()
     previous_regime:  str | None = None
     state             = BotState()
+
+    # ── Hot-reload config from .env ───────────────────────────────────────────
+    def _reload_config() -> list[str]:
+        """Re-read .env; update state config. Returns list of changed fields."""
+        load_dotenv(override=True)
+        new_pair     = os.getenv('TRADING_PAIR',    'BTC/USDT')
+        new_short    = os.getenv('TIMEFRAME_SHORT',  '15m')
+        new_medium   = os.getenv('TIMEFRAME_MEDIUM', '1h')
+        new_long     = os.getenv('TIMEFRAME_LONG',   '4h')
+        new_interval = int(os.getenv('INTERVAL_SECONDS') or
+                          _TF_TO_SECONDS.get(new_short, 3600))
+
+        changed: list[str] = []
+
+        if new_pair != state.pair:
+            if executor.trailing_stop.is_active or executor.short_manager.is_active:
+                logger.warning(
+                    f"Config: pair ingin berganti {state.pair}→{new_pair} "
+                    "tapi ada posisi aktif. Perubahan ditunda sampai posisi ditutup."
+                )
+            else:
+                changed.append(f"PAIR {state.pair}→{new_pair}")
+                state.pair = new_pair
+
+        if new_short != state.tf_short:
+            changed.append(f"TF_SHORT {state.tf_short}→{new_short}")
+            state.tf_short = new_short
+        if new_medium != state.tf_medium:
+            changed.append(f"TF_MEDIUM {state.tf_medium}→{new_medium}")
+            state.tf_medium = new_medium
+        if new_long != state.tf_long:
+            changed.append(f"TF_LONG {state.tf_long}→{new_long}")
+            state.tf_long = new_long
+        if new_interval != state.interval:
+            changed.append(f"INTERVAL {state.interval}→{new_interval}s")
+            state.interval = new_interval
+
+        if changed:
+            logger.info(f"Config hot-reloaded: {', '.join(changed)}")
+        return changed
 
     # ── Telegram command callbacks ─────────────────────────────────────────────
     def _cmd_status(*_):
@@ -191,7 +237,7 @@ def run_bot():
             lines.append(ens_line)
         if fg_line:
             lines.append(fg_line)
-        base = PAIR.split('/')[0]
+        base = state.pair.split('/')[0]
         lines.append(
             f"📈 {base}: <b>${btc_price:,.0f}</b>{btc_chg_str}"
         )
@@ -211,9 +257,9 @@ def run_bot():
 
     def _cmd_balance(*_):
         try:
-            p = get_portfolio_status(PAIR)
+            p = get_portfolio_status(state.pair)
             state.portfolio = p
-            _base = PAIR.split('/')[0]
+            _base = state.pair.split('/')[0]
             notifier._send(
                 f"💰 <b>Balance (Live)</b>\n\n"
                 f"  • Total: <b>${p['total_value_usdt']:,.2f}</b>\n"
@@ -302,20 +348,28 @@ def run_bot():
     health_checker.start()
 
     try:
-        initial_portfolio = get_portfolio_status(PAIR)
+        initial_portfolio = get_portfolio_status(state.pair)
         risk_manager.set_starting_balance(initial_portfolio['total_value_usdt'])
     except Exception as e:
         logger.critical(f"Gagal mengambil portfolio awal: {e}")
         sys.exit(1)
 
-    notifier.notify_startup(PAIR, TF_MEDIUM, initial_portfolio['total_value_usdt'])
+    notifier.notify_startup(state.pair, state.tf_medium, initial_portfolio['total_value_usdt'])
 
     while True:
         try:
+            # ── 0. Hot-reload config from .env ────────────────────────────────
+            changed = _reload_config()
+            if changed:
+                notifier._send(
+                    "🔄 <b>Config diperbarui (tanpa restart)</b>\n"
+                    + "\n".join(f"• {c}" for c in changed)
+                )
+
             # ── 1. Trailing stop check (before fetching new data) ─────────────
             if executor.trailing_stop.is_active:
                 try:
-                    portfolio_ts = get_portfolio_status(PAIR)
+                    portfolio_ts = get_portfolio_status(state.pair)
                     current_price = portfolio_ts['btc_price']
                     stop_price    = executor.trailing_stop.get_current_stop()
                     dist_pct      = executor.trailing_stop.stop_distance_pct(current_price)
@@ -330,8 +384,8 @@ def run_bot():
                             f"Trailing stop terkena di ${current_price:,.2f} "
                             f"(stop={stop_str}) — eksekusi SELL"
                         )
-                        ts_result = executor.execute_trailing_stop_sell(portfolio_ts, pair=PAIR)
-                        base = PAIR.split('/')[0]
+                        ts_result = executor.execute_trailing_stop_sell(portfolio_ts, pair=state.pair)
+                        base = state.pair.split('/')[0]
                         if ts_result.get('status') == 'success':
                             notifier._send(
                                 f"🛑 <b>Trailing Stop Terkena</b>\n\n"
@@ -362,7 +416,7 @@ def run_bot():
                         logger.info(
                             f"Take profit terkena di ${current_price:,.2f} — eksekusi SELL 50%"
                         )
-                        tp_result = executor.execute_take_profit_sell(portfolio_tp, pair=PAIR)
+                        tp_result = executor.execute_take_profit_sell(portfolio_tp, pair=state.pair)
                         if tp_result.get('status') == 'success':
                             notifier._send(
                                 f"✅ <b>Take Profit Terkena</b>\n\n"
@@ -381,10 +435,10 @@ def run_bot():
 
             # ── 2. Market data ────────────────────────────────────────────────
             logger.info("Fetching multi-timeframe data...")
-            tf_data    = fetch_multi_timeframe(PAIR)
-            _df_medium = tf_data.get(TF_MEDIUM)
+            tf_data    = fetch_multi_timeframe(state.pair)
+            _df_medium = tf_data.get(state.tf_medium)
             df         = _df_medium if _df_medium is not None else next(iter(tf_data.values()))
-            portfolio  = get_portfolio_status(PAIR)
+            portfolio  = get_portfolio_status(state.pair)
             state.portfolio = portfolio
             state.df        = df
 
@@ -411,7 +465,7 @@ def run_bot():
             try:
                 hmm_tf_states = hmm.fit_and_predict_multi(tf_data)
                 if hmm_tf_states:
-                    hmm_state = hmm_tf_states.get(TF_MEDIUM)
+                    hmm_state = hmm_tf_states.get(state.tf_medium)
                     if hmm.is_fitted:
                         _, hmm_confidence = hmm.predict(df)
                     hmm_bias = HMMClassifier.get_trading_bias(hmm_state) if hmm_state else None
@@ -430,7 +484,7 @@ def run_bot():
             # ── 4. Regime detection ───────────────────────────────────────────
             regime_result: dict | None = None
             try:
-                df_4h = tf_data.get(TF_LONG)
+                df_4h = tf_data.get(state.tf_long)
                 regime_result = regime_detector.detect(df, df_4h)
                 regime_name   = regime_result["regime"]
                 logger.info(
@@ -496,7 +550,7 @@ def run_bot():
                 sentiment=sentiment,
                 ensemble_result=ensemble_result,
                 regime_result=regime_result,
-                pair=PAIR,
+                pair=state.pair,
             )
 
             if confluence_text:
@@ -510,9 +564,9 @@ def run_bot():
                 decision["market_state"]   = hmm_state
                 decision["hmm_confidence"] = hmm_confidence
             if hmm_tf_states:
-                decision["tf_15m_state"] = hmm_tf_states.get(TF_SHORT, "")
-                decision["tf_1h_state"]  = hmm_tf_states.get(TF_MEDIUM, "")
-                decision["tf_4h_state"]  = hmm_tf_states.get(TF_LONG, "")
+                decision["tf_15m_state"] = hmm_tf_states.get(state.tf_short, "")
+                decision["tf_1h_state"]  = hmm_tf_states.get(state.tf_medium, "")
+                decision["tf_4h_state"]  = hmm_tf_states.get(state.tf_long, "")
             if confluence_text:
                 decision["confluence"] = confluence_text
             if sentiment:
@@ -534,7 +588,7 @@ def run_bot():
             )
             risk_manager.log_decision(decision, portfolio)
 
-            notifier.notify_decision(decision, portfolio, pair=PAIR)
+            notifier.notify_decision(decision, portfolio, pair=state.pair)
 
             # ── 10. Execute (respect trading_enabled / pause) ─────────────────
             if not state.trading_enabled:
@@ -549,7 +603,7 @@ def run_bot():
                         if executor.short_manager.is_active:
                             executor.short_manager.close_short(portfolio)
                         short_result = executor.short_manager.open_short(
-                            PAIR, decision.get('size_pct', 10), portfolio
+                            state.pair, decision.get('size_pct', 10), portfolio
                         )
                         if short_result.get('status') == 'success':
                             notifier._send(
@@ -567,16 +621,16 @@ def run_bot():
                         decision, portfolio,
                         atr=current_atr,
                         regime=regime_result["regime"] if regime_result else None,
-                        pair=PAIR,
+                        pair=state.pair,
                     )
                     if result.get('status') == 'error':
                         msg = result.get('message', 'unknown')
                         logger.error(f"Eksekusi order gagal: {msg}")
                         notifier.notify_error("Eksekusi order", Exception(msg))
 
-            state.next_session_at = datetime.now() + timedelta(seconds=INTERVAL_SECONDS)
-            logger.info(f"Tidur {INTERVAL_SECONDS // 60} menit hingga sesi berikutnya...")
-            time.sleep(INTERVAL_SECONDS)
+            state.next_session_at = datetime.now() + timedelta(seconds=state.interval)
+            logger.info(f"Tidur {state.interval // 60} menit hingga sesi berikutnya...")
+            time.sleep(state.interval)
 
         except KeyboardInterrupt:
             logger.info("Bot dihentikan manual.")

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ _ENV_FILE     = Path(__file__).parent.parent / ".env"
 
 # Keys that profiles are allowed to touch
 _PROFILE_KEYS = {
+    "TRADING_PAIR",
     "MAX_DRAWDOWN_PCT",
     "TRAILING_STOP_ATR_MULTIPLIER",
     "TIMEFRAME_SHORT",
@@ -133,3 +135,4 @@ def _apply_to_env(settings: dict[str, str]) -> None:
         new_lines.append(f"{key}={value}")
 
     _ENV_FILE.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    load_dotenv(override=True)  # refresh os.environ immediately
