@@ -161,8 +161,8 @@ else:
                 if st.button(f"Aktifkan {name}", key=f"activate_{slug}", use_container_width=True):
                     try:
                         load_profile(slug)
-                        _send_telegram(f"🔧 <b>Config profile diubah ke <i>{name}</i>.</b>\nRestart bot untuk apply perubahan.")
-                        st.success(f"Profile <b>{name}</b> diaktifkan. Restart bot untuk apply.", icon="✅")
+                        _send_telegram(f"🔧 <b>Config profile diubah ke <i>{name}</i>.</b>\nPerubahan akan aktif di sesi berikutnya secara otomatis.")
+                        st.success(f"Profile **{name}** diaktifkan. Perubahan aktif di sesi berikutnya otomatis.", icon="✅")
                         st.cache_data.clear()
                         time.sleep(0.5)
                         st.rerun()
@@ -382,7 +382,7 @@ with act_col1:
             "ENSEMBLE_SELL_THRESHOLD":      f"{ens_sell:.2f}",
         }
         _write_env(updates)
-        st.success("✅ Konfigurasi disimpan ke .env. Restart bot untuk apply.", icon="💾")
+        st.success("✅ Konfigurasi disimpan. Perubahan aktif di sesi berikutnya otomatis.", icon="💾")
 
 with act_col2:
     if st.button("🔄 Reset ke Default", use_container_width=True):
