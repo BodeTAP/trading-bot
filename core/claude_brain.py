@@ -38,6 +38,14 @@ Aturan Fear & Greed Index (jika tersedia):
 - Extreme Greed (>75): kurangi size BUY, lebih sensitif untuk SELL
 - Greed (56-74): pertimbangkan memperkecil size BUY sedikit
 
+Aturan Analisis Fundamental / Berita (jika tersedia):
+- Berita regulasi negatif (ban, SEC action, pajak ketat): turunkan confidence, kurangi size atau HOLD
+- Berita hack exchange atau exploit besar: prioritaskan HOLD/SELL meski sinyal teknikal bullish
+- Berita adopsi institusional, ETF approval, partnership besar: dukung BUY jika teknikal setuju
+- Berita Fed hawkish / kenaikan suku bunga: bearish untuk crypto, perketat syarat BUY
+- Jika berita sangat negatif tapi teknikal bullish: pilih HOLD, sebutkan konflik di reason
+- Jika berita sangat positif tapi teknikal bearish: tetap ikuti teknikal, sebutkan potensi reversal
+
 Aturan multi-timeframe:
 - 3/3 TF sepakat = confidence HIGH; 2/3 = MEDIUM; 1/3 = LOW
 - Timeframe lebih tinggi (4h) memiliki bobot lebih besar dari timeframe lebih rendah (15m)

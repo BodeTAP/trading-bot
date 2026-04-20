@@ -197,6 +197,7 @@ def format_context_for_claude(
     ensemble_result: dict | None = None,
     regime_result:  dict | None = None,
     pair: str = 'BTC/USDT',
+    news: dict | None = None,
 ) -> str:
     # Use last valid row from primary df
     df_valid = df.dropna(subset=['rsi', 'ma50', 'macd'])
@@ -348,6 +349,12 @@ KONDISI PASAR (HMM Regime Classifier):
             f"Interpretasi: {sentiment['interpretation']}\n"
         )
 
+    # ── News section ─────────────────────────────────────────────────────────
+    news_section = ""
+    if news and news.get("headlines"):
+        from core.news_fetcher import format_news_for_claude
+        news_section = format_news_for_claude(news)
+
     return f"""
 KONDISI PASAR SAAT INI - {pair}
 
@@ -361,7 +368,7 @@ INDIKATOR TEKNIKAL:
 - Posisi harga vs MA50: {vs_ma50}
 - Posisi harga vs MA200: {vs_ma200}
 - MACD: {latest['macd']:.4f} | Signal: {latest['macd_signal']:.4f}
-{hmm_section}{regime_section}{ensemble_section}{sentiment_section}{mtf_section}
+{hmm_section}{regime_section}{ensemble_section}{sentiment_section}{mtf_section}{news_section}
 STATUS PORTOFOLIO:
 - USDT tersedia: ${portfolio['usdt_available']:,.2f}
 - {pair.split('/')[0]} dipegang: {portfolio['btc_held']:.6f} {pair.split('/')[0]} (≈ ${portfolio['btc_value_usdt']:,.2f})

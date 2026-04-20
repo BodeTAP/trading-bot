@@ -14,6 +14,7 @@ from core.state_persistence import store
 from core.telegram_notifier import TelegramNotifier, TelegramCommandHandler
 from core.hmm_classifier import HMMClassifier
 from core.sentiment import SentimentFetcher
+from core.news_fetcher import NewsFetcher
 from core.ensemble import EnsembleSignal
 from core.regime_detector import RegimeDetector
 from core.performance_monitor import PerformanceMonitor
@@ -148,6 +149,7 @@ def run_bot():
     notifier          = TelegramNotifier()
     hmm               = HMMClassifier()
     sentiment_fetcher = SentimentFetcher()
+    news_fetcher      = NewsFetcher()
     ensemble          = EnsembleSignal()
     regime_detector   = RegimeDetector()
     previous_regime:  str | None = None
@@ -589,6 +591,17 @@ def run_bot():
             else:
                 logger.warning("Fear & Greed Index tidak tersedia, lanjut tanpa sentimen.")
 
+            # ── 8. News (Fundamental) ─────────────────────────────────────────
+            news = None
+            try:
+                news = news_fetcher.fetch(state.pair)
+                if news:
+                    logger.info(f"News: {news['count']} berita relevan untuk {news['base']}")
+                else:
+                    logger.warning("News: tidak ada berita tersedia, lanjut tanpa fundamental.")
+            except Exception as e:
+                logger.warning(f"News fetch gagal: {e}")
+
             # ── 5. Build context → ask Claude ─────────────────────────────────
             logger.info("Mengirim data ke Claude...")
             context, confluence_text = format_context_for_claude(
@@ -602,6 +615,7 @@ def run_bot():
                 ensemble_result=ensemble_result,
                 regime_result=regime_result,
                 pair=state.pair,
+                news=news,
             )
 
             if confluence_text:
