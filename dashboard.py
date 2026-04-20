@@ -13,6 +13,8 @@ from core.sentiment import SentimentFetcher
 load_dotenv()
 
 DECISIONS_LOG = Path("logs/decisions.json")
+PAIR = os.getenv("TRADING_PAIR", "BTC/USDT")
+BASE = PAIR.split("/")[0]   # "BTC", "ETH", "BNB", dll
 INTERVAL_SECONDS = int(os.getenv("INTERVAL_SECONDS", 3600))
 REFRESH_SECONDS = 60
 
@@ -742,7 +744,7 @@ with tab_live:
 
         _disp.rename(columns={
             "timestamp":"Waktu","action":"Aksi","confidence":"Conf","size_pct":"Size",
-            "total_value":"Portfolio","usdt_available":"USDT","btc_held":"BTC","reason":"Alasan",
+            "total_value":"Portfolio","usdt_available":"USDT","btc_held":BASE,"reason":"Alasan",
             "market_state":"HMM","hmm_confidence":"HMM%","confluence":"Konfl",
             "tf_15m_state":"15m","tf_1h_state":"1h","tf_4h_state":"4h",
             "claude_size_pct":"Claude%","ensemble_signal":"Signal",
@@ -1032,9 +1034,9 @@ with tab_bt:
             _td["pnl"]         = _td["pnl"].apply(
                 lambda v: f"${v:+.2f}" if v is not None and not (isinstance(v, float) and pd.isna(v)) else "—")
             _td.rename(columns={"timestamp":"Waktu","action":"Aksi","price":"Harga",
-                                 "btc_amount":"BTC","usdt_amount":"USDT","fee":"Fee","pnl":"PnL"},
+                                 "btc_amount":BASE,"usdt_amount":"USDT","fee":"Fee","pnl":"PnL"},
                        inplace=True)
-            _td = _td[["Waktu","Aksi","Harga","BTC","USDT","Fee","PnL"]].iloc[::-1].reset_index(drop=True)
+            _td = _td[["Waktu","Aksi","Harga",BASE,"USDT","Fee","PnL"]].iloc[::-1].reset_index(drop=True)
             _raw_acts_bt = [t["action"] for t in reversed(_tlist)]
             _td_cols     = list(_td.columns)
 
