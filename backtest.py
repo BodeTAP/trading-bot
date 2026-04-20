@@ -32,7 +32,8 @@ def parse_args() -> argparse.Namespace:
         epilog=(
             "Contoh:\n"
             "  python backtest.py\n"
-            "  python backtest.py --exchange mainnet --candles 800 --timeframe 4h\n"
+            "  python backtest.py --exchange yfinance --candles 1000 --timeframe 1h\n"
+            "  python backtest.py --exchange yfinance --candles 500 --timeframe 4h\n"
             "  python backtest.py --exchange testnet --candles 100 --warmup 40\n"
         ),
     )
@@ -46,9 +47,9 @@ def parse_args() -> argparse.Namespace:
                    help="Jumlah candle historis (default: 500)")
     p.add_argument("--warmup",    type=int,   default=200,
                    help="Candle warmup untuk HMM training (default: 200)")
-    p.add_argument("--exchange",  type=str,   default="testnet",
-                   choices=["testnet", "mainnet"],
-                   help="Sumber data: testnet (terbatas) atau mainnet/public (default: testnet)")
+    p.add_argument("--exchange",  type=str,   default="yfinance",
+                   choices=["testnet", "mainnet", "yfinance"],
+                   help="Sumber data: yfinance (real, direkomendasikan), mainnet, testnet (default: yfinance)")
     p.add_argument("--no-chart",  action="store_true",
                    help="Skip menyimpan equity curve chart")
     return p.parse_args()
@@ -72,20 +73,20 @@ def print_results(result: dict) -> None:
     # ── separator helper ──────────────────────────────────────────────────────
     W = 52
 
-    def sep(char="─"):
+    def sep(char="-"):
         print(char * W)
 
     def row(label, value, width=28):
         print(f"  {label:<{width}} {value}")
 
     print()
-    sep("═")
+    sep("=")
     print(f"{'BACKTEST RESULTS':^{W}}")
-    sep("═")
+    sep("=")
 
     print(f"\n  Pair      : {params['pair']}    Timeframe: {params['timeframe']}")
     print(f"  Modal awal: {_money(params['initial_capital'])}")
-    print(f"  Periode   : {period['start'][:10]} → {period['end'][:10]}")
+    print(f"  Periode   : {period['start'][:10]} -> {period['end'][:10]}")
     print(f"  Candles   : {params['n_candles']}  (warmup: {params['warmup_candles']})")
 
     sep()
@@ -94,10 +95,8 @@ def print_results(result: dict) -> None:
 
     ret_pct = m.get("total_return_pct", 0)
     final   = m.get("final_capital", params["initial_capital"])
-    ret_color = "\033[92m" if ret_pct >= 0 else "\033[91m"
-    reset = "\033[0m"
 
-    row("Total Return",    f"{ret_color}{_pct(ret_pct)}{reset}  ({_money(final)})")
+    row("Total Return",    f"{_pct(ret_pct)}  ({_money(final)})")
     row("Win Rate",        f"{m.get('win_rate_pct', 0):.1f}%  ({m.get('sell_trades', 0)} sell trades)")
     row("Max Drawdown",    _pct(-abs(m.get("max_drawdown_pct", 0))))
     row("Sharpe Ratio",    f"{m.get('sharpe_ratio', 0):.3f}")
@@ -108,8 +107,10 @@ def print_results(result: dict) -> None:
     sep()
 
     row("Total Trades",    m.get("total_trades", 0))
-    row("  BUY orders",    m.get("buy_trades", 0))
-    row("  SELL orders",   m.get("sell_trades", 0))
+    row("  LONG  BUY",     m.get("buy_trades", 0))
+    row("  LONG  SELL",    m.get("sell_trades", 0))
+    row("  SHORT OPEN",    m.get("short_open_trades", 0))
+    row("  SHORT CLOSE",   m.get("short_close_trades", 0))
     row("Total Fees",      _money(m.get("total_fees_usdt", 0)))
 
     sep()
@@ -119,7 +120,7 @@ def print_results(result: dict) -> None:
         print("  LAST 5 TRADES")
         sep()
         print(f"  {'Timestamp':<22} {'Action':<6} {'Price':>10} {'BTC':>10} {'PnL':>10}")
-        sep("·")
+        sep(".")
         for t in trades[-5:]:
             pnl_str = f"${t['pnl']:+.2f}" if t.get("pnl") is not None else "  —"
             print(
@@ -238,8 +239,14 @@ def save_equity_chart(result: dict, output_path: Path) -> None:
 def main() -> None:
     args = parse_args()
 
-    use_mainnet = (args.exchange == "mainnet")
-    source_label = "Binance mainnet (public, no API key)" if use_mainnet else "Binance testnet"
+    use_yfinance = (args.exchange == "yfinance")
+    use_mainnet  = (args.exchange == "mainnet")
+    if use_yfinance:
+        source_label = "yfinance (data nyata BTC-USD)"
+    elif use_mainnet:
+        source_label = "Binance mainnet (public, no API key)"
+    else:
+        source_label = "Binance testnet"
 
     from core.backtester import (Backtester, EQUITY_PNG, MIN_CANDLES, MIN_BACKTEST,
                                  MAX_WARMUP_PCT, N_BATCHES, BATCH_SIZE)
@@ -253,7 +260,7 @@ def main() -> None:
     print(f"\n  Memulai backtest: {args.pair} {args.timeframe}, "
           f"{args.candles} candles, modal ${args.capital:,.0f}")
     print(f"  Sumber data: {source_label}")
-    if not use_mainnet:
+    if not use_mainnet and not use_yfinance:
         total_batch_candles = N_BATCHES * BATCH_SIZE
         print(f"  Fetching {total_batch_candles} candles dalam {N_BATCHES} batches "
               f"({BATCH_SIZE} candles/batch)...")
@@ -266,6 +273,7 @@ def main() -> None:
             n_candles       = args.candles,
             warmup_candles  = args.warmup,
             use_mainnet     = use_mainnet,
+            use_yfinance    = use_yfinance,
         )
         result = bt.run()
     except Exception as e:

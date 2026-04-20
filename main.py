@@ -343,6 +343,37 @@ def run_bot():
                 except Exception as e:
                     logger.warning(f"Trailing stop check gagal: {e}")
 
+            # ── 1b. Take-profit check ─────────────────────────────────────────
+            if executor.take_profit.is_active:
+                try:
+                    portfolio_tp  = get_portfolio_status()
+                    current_price = portfolio_tp['btc_price']
+                    target_price  = executor.take_profit.target_price
+                    logger.info(
+                        f"Take profit aktif: harga=${current_price:,.2f} | "
+                        f"target=${target_price:,.2f}"
+                    )
+                    if executor.take_profit.check_triggered(current_price):
+                        logger.info(
+                            f"Take profit terkena di ${current_price:,.2f} — eksekusi SELL 50%"
+                        )
+                        tp_result = executor.execute_take_profit_sell(portfolio_tp)
+                        if tp_result.get('status') == 'success':
+                            notifier._send(
+                                f"✅ <b>Take Profit Terkena</b>\n\n"
+                                f"Harga : <b>${current_price:,.2f}</b>\n"
+                                f"Target: <b>${target_price:,.2f}</b>\n"
+                                f"50% posisi BTC dijual. "
+                                f"Trailing stop tetap aktif untuk sisa posisi."
+                            )
+                        else:
+                            notifier.notify_error(
+                                "Take profit SELL",
+                                Exception(tp_result.get('message', 'unknown'))
+                            )
+                except Exception as e:
+                    logger.warning(f"Take profit check gagal: {e}")
+
             # ── 2. Market data ────────────────────────────────────────────────
             logger.info("Fetching multi-timeframe data...")
             tf_data    = fetch_multi_timeframe(PAIR)
@@ -506,15 +537,35 @@ def run_bot():
                 resume = state.pause_until.strftime('%H:%M:%S')
                 logger.info(f"Trading dijeda hingga {resume} — eksekusi dilewati.")
             else:
-                result = executor.execute(
-                    decision, portfolio,
-                    atr=current_atr,
-                    regime=regime_result["regime"] if regime_result else None,
-                )
-                if result.get('status') == 'error':
-                    msg = result.get('message', 'unknown')
-                    logger.error(f"Eksekusi order gagal: {msg}")
-                    notifier.notify_error("Eksekusi order", Exception(msg))
+                # ── SHORT open/close (futures mode only) ──────────────────────
+                if executor.short_manager.is_enabled:
+                    if decision['action'] == 'SHORT':
+                        if executor.short_manager.is_active:
+                            executor.short_manager.close_short(portfolio)
+                        short_result = executor.short_manager.open_short(
+                            PAIR, decision.get('size_pct', 10), portfolio
+                        )
+                        if short_result.get('status') == 'success':
+                            notifier._send(
+                                f"📉 <b>SHORT Dibuka</b>\n"
+                                f"Harga: <b>${portfolio.get('btc_price', 0):,.2f}</b>\n"
+                                f"Alasan: {decision.get('reason', '')[:80]}"
+                            )
+                    elif decision['action'] in ('BUY',) and executor.short_manager.is_active:
+                        executor.short_manager.close_short(portfolio)
+                        notifier._send("📈 <b>SHORT Ditutup</b> — sinyal BUY terdeteksi")
+
+                # ── Regular BUY/SELL/HOLD ──────────────────────────────────────
+                if decision['action'] != 'SHORT':
+                    result = executor.execute(
+                        decision, portfolio,
+                        atr=current_atr,
+                        regime=regime_result["regime"] if regime_result else None,
+                    )
+                    if result.get('status') == 'error':
+                        msg = result.get('message', 'unknown')
+                        logger.error(f"Eksekusi order gagal: {msg}")
+                        notifier.notify_error("Eksekusi order", Exception(msg))
 
             state.next_session_at = datetime.now() + timedelta(seconds=INTERVAL_SECONDS)
             logger.info(f"Tidur {INTERVAL_SECONDS // 60} menit hingga sesi berikutnya...")

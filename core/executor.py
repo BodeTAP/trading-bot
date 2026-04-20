@@ -1,7 +1,7 @@
 import logging
 import os
 from dotenv import load_dotenv
-from core.market_data import get_exchange
+from core.market_data import get_exchange, get_futures_exchange
 
 load_dotenv()
 
@@ -108,12 +108,128 @@ class TrailingStopManager:
         logger.info("Trailing stop cleared.")
 
 
+# ── Short Manager (Futures) ───────────────────────────────────────────────────
+
+class ShortManager:
+    """
+    Manages short positions via Binance USDT-margined futures.
+
+    Requires TRADING_MODE=futures in .env.
+    Only opens short when MA50 < MA200 (confirmed downtrend).
+    """
+
+    def __init__(self):
+        self._pair:         str | None   = None
+        self._entry_price:  float | None = None
+        self._btc_amount:   float | None = None
+        self._enabled = os.getenv('TRADING_MODE', 'spot').lower() == 'futures'
+
+    @property
+    def is_enabled(self) -> bool:
+        return self._enabled
+
+    @property
+    def is_active(self) -> bool:
+        return self._entry_price is not None
+
+    @property
+    def entry_price(self) -> float | None:
+        return self._entry_price
+
+    def open_short(self, pair: str, size_pct: float, portfolio: dict) -> dict:
+        if not self._enabled:
+            return {"status": "skipped", "reason": "TRADING_MODE != futures"}
+        try:
+            exchange    = get_futures_exchange()
+            btc_price   = portfolio.get('btc_price', 0)
+            usdt_margin = portfolio['usdt_available'] * (size_pct / 100)
+            btc_amount  = round(usdt_margin / btc_price, 6)
+            if btc_amount < MIN_BTC_ORDER:
+                return {"status": "skipped", "reason": f"BTC amount terlalu kecil ({btc_amount})"}
+            order = exchange.create_market_sell_order(pair, btc_amount,
+                                                       params={"reduceOnly": False})
+            self._pair        = pair
+            self._entry_price = btc_price
+            self._btc_amount  = btc_amount
+            logger.info(f"SHORT OPEN: {btc_amount} BTC @ ${btc_price:,.2f} (order {order['id']})")
+            return {"status": "success", "order": order}
+        except Exception as e:
+            logger.error(f"SHORT OPEN gagal: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def close_short(self, portfolio: dict) -> dict:
+        if not self._enabled or not self.is_active:
+            return {"status": "skipped", "reason": "short tidak aktif"}
+        try:
+            exchange   = get_futures_exchange()
+            order      = exchange.create_market_buy_order(
+                self._pair, self._btc_amount, params={"reduceOnly": True}
+            )
+            current    = portfolio.get('btc_price', 0)
+            pnl        = (self._entry_price - current) * self._btc_amount
+            logger.info(
+                f"SHORT CLOSE: {self._btc_amount} BTC @ ${current:,.2f} | "
+                f"PnL estimasi: ${pnl:+,.2f} (order {order['id']})"
+            )
+            self._pair = self._entry_price = self._btc_amount = None
+            return {"status": "success", "order": order}
+        except Exception as e:
+            logger.error(f"SHORT CLOSE gagal: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def clear(self) -> None:
+        self._pair = self._entry_price = self._btc_amount = None
+
+
+# ── Take Profit Manager ────────────────────────────────────────────────────────
+
+class TakeProfitManager:
+    """
+    Tracks a take-profit target. When price reaches the target,
+    50% of the BTC position is sold and the trailing stop continues
+    on the remaining 50%.
+    """
+
+    def __init__(self):
+        self._entry_price:    float | None = None
+        self._target_price:   float | None = None
+        self._take_profit_pct: float | None = None
+
+    @property
+    def is_active(self) -> bool:
+        return self._target_price is not None
+
+    @property
+    def target_price(self) -> float | None:
+        return self._target_price
+
+    def track_position(self, entry_price: float, take_profit_pct: float) -> None:
+        self._entry_price     = entry_price
+        self._take_profit_pct = take_profit_pct
+        self._target_price    = entry_price * (1 + take_profit_pct / 100)
+        logger.info(
+            f"Take profit set: entry=${entry_price:,.2f} "
+            f"+{take_profit_pct:.1f}% → target=${self._target_price:,.2f}"
+        )
+
+    def check_triggered(self, current_price: float) -> bool:
+        return self.is_active and current_price >= self._target_price
+
+    def clear_position(self) -> None:
+        self._entry_price     = None
+        self._target_price    = None
+        self._take_profit_pct = None
+        logger.info("Take profit tracker cleared.")
+
+
 # ── Order Executor ─────────────────────────────────────────────────────────────
 
 class Executor:
     def __init__(self):
         self.exchange       = get_exchange()
         self.trailing_stop  = TrailingStopManager()
+        self.take_profit    = TakeProfitManager()
+        self.short_manager  = ShortManager()
 
     def execute(self, decision: dict, portfolio: dict,
                 atr: float | None = None, regime: str | None = None) -> dict:
@@ -127,23 +243,38 @@ class Executor:
         try:
             if action == 'BUY':
                 result = self._buy(size_pct, portfolio)
-                if result.get('status') == 'success' and atr:
+                if result.get('status') == 'success':
                     entry = portfolio.get('btc_price', 0)
                     if entry > 0:
-                        mult = _REGIME_ATR_MULT.get(regime, 2.0) if regime else 2.0
-                        self.trailing_stop.track_position('BTC/USDT', entry, atr,
-                                                          atr_multiplier=mult)
+                        if atr:
+                            mult = _REGIME_ATR_MULT.get(regime, 2.0) if regime else 2.0
+                            self.trailing_stop.track_position('BTC/USDT', entry, atr,
+                                                              atr_multiplier=mult)
+                        tp_pct = decision.get('take_profit_pct', 4.0)
+                        self.take_profit.track_position(entry, tp_pct)
                 return result
             elif action == 'SELL':
                 result = self._sell(size_pct, portfolio)
                 if result.get('status') == 'success':
                     self.trailing_stop.clear_position()
+                    self.take_profit.clear_position()
                 return result
             else:
                 logger.warning(f"Action tidak dikenal: {action}")
                 return {"status": "skipped", "reason": f"action tidak dikenal: {action}"}
         except Exception as e:
             logger.error(f"Error eksekusi order: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def execute_take_profit_sell(self, portfolio: dict) -> dict:
+        """Sell 50% of BTC position when take-profit target is reached."""
+        try:
+            result = self._sell(50.0, portfolio)
+            if result.get('status') == 'success':
+                self.take_profit.clear_position()
+            return result
+        except Exception as e:
+            logger.error(f"Take profit SELL gagal: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
     def execute_trailing_stop_sell(self, portfolio: dict) -> dict:

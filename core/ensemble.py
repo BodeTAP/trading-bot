@@ -18,8 +18,8 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 WEIGHTS        = {"rule": 0.3, "hmm": 0.3, "momentum": 0.4}
-BUY_THRESHOLD  =  0.3
-SELL_THRESHOLD = -0.3
+BUY_THRESHOLD  =  0.2
+SELL_THRESHOLD = -0.15
 _VOTE_SCORE    = {"BUY": 1, "HOLD": 0, "SELL": -1}
 
 
@@ -72,9 +72,9 @@ def _rule_model(df_1h: pd.DataFrame, tf_biases: dict[str, str]) -> tuple[str, fl
     if total == 0:
         return "HOLD", 0.0
 
-    if buy_v >= 3:
+    if buy_v >= 2:
         return "BUY",  round(buy_v  / (total + 1e-9), 2)
-    if sell_v >= 3:
+    if sell_v >= 2:
         return "SELL", round(sell_v / (total + 1e-9), 2)
     return "HOLD", round(0.4 + abs(buy_v - sell_v) * 0.05, 2)
 
@@ -155,7 +155,7 @@ def _momentum_model(multi_tf: dict) -> tuple[str, float]:
 
     conf = score / max_score
 
-    if score >= 4:
+    if score >= 3:
         return "BUY",  round(conf, 2)
     if score <= 1:
         return "SELL", round(1.0 - conf, 2)

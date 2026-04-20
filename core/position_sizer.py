@@ -21,24 +21,24 @@ MAX_SIZE = 20.0  # % — hard cap (also enforced by risk_manager)
 # Regime multipliers
 _REGIME_MULT: dict[str, float] = {
     "TRENDING_UP":   1.20,
-    "TRENDING_DOWN": 0.20,
-    "SIDEWAYS":      0.70,
-    "VOLATILE":      0.30,
+    "TRENDING_DOWN": 0.40,
+    "SIDEWAYS":      0.80,
+    "VOLATILE":      0.50,
 }
 
 # HMM multipliers (applied to base_pct)
 _HMM_MULT: dict[str, float] = {
     "CRASH":    0.0,   # → HOLD, handled before this is called
-    "BEAR":     0.40,
-    "NEUTRAL":  0.70,
+    "BEAR":     0.60,
+    "NEUTRAL":  0.80,
     "BULL":     1.00,
-    "EUPHORIA": 0.70,
+    "EUPHORIA": 0.75,
 }
 
 # Confidence multipliers
 _CONF_MULT: dict[str, float] = {
     "HIGH":   1.00,
-    "MEDIUM": 0.60,
+    "MEDIUM": 0.75,
     "LOW":    0.00,   # → HOLD, handled by risk_manager
 }
 

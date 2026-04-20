@@ -86,6 +86,28 @@ class RiskManager:
             decision['size_pct'] = 0
             decision['reason']  += " (tidak ada BTC untuk dijual)"
 
+        if decision['action'] == 'SHORT':
+            trading_mode = os.getenv('TRADING_MODE', 'spot').lower()
+            if trading_mode != 'futures':
+                decision['action']   = 'HOLD'
+                decision['size_pct'] = 0
+                decision['reason']  += " (SHORT diblokir — TRADING_MODE bukan futures)"
+            elif portfolio['usdt_available'] < 10:
+                decision['action']   = 'HOLD'
+                decision['size_pct'] = 0
+                decision['reason']  += " (USDT tidak cukup untuk SHORT)"
+            else:
+                hmm_state = decision.get('market_state')
+                regime    = decision.get('regime')
+                if hmm_state not in ('BEAR', 'CRASH'):
+                    decision['action']   = 'HOLD'
+                    decision['size_pct'] = 0
+                    decision['reason']  += f" (SHORT diblokir — HMM state {hmm_state} bukan BEAR/CRASH)"
+                elif regime not in ('TRENDING_DOWN', 'VOLATILE', None):
+                    decision['action']   = 'HOLD'
+                    decision['size_pct'] = 0
+                    decision['reason']  += f" (SHORT diblokir — regime {regime} tidak mendukung)"
+
         # ── Dynamic position sizing (BUY only) ────────────────────────────────
         if decision['action'] == 'BUY' and decision['size_pct'] > 0:
             claude_size = decision['size_pct']

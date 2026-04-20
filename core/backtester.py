@@ -37,8 +37,12 @@ MIN_CANDLES     = 50      # minimum candles untuk backtest valid
 MIN_WARMUP      = 30      # minimum warmup HMM (sesuai MIN_ROWS di hmm_classifier)
 MIN_BACKTEST    = 20      # minimum candles periode backtest (setelah warmup)
 MAX_WARMUP_PCT  = 0.40    # warmup maksimal 40% dari total data
-BUY_SIZE_PCT    = 0.15    # 15 % of available USDT per BUY
-SELL_SIZE_PCT   = 0.50    # 50 % of held BTC per SELL
+BUY_SIZE_PCT        = 0.15    # 15 % of available USDT per BUY
+SELL_SIZE_PCT       = 1.00    # 100 % of held BTC per SELL (full exit)
+TAKE_PROFIT_PCT     = 0.020   # 2.0 % unrealized gain → full exit
+STOP_LOSS_PCT       = 0.015   # 1.5 % unrealized loss → full exit
+MIN_BUY_COOLDOWN    = 4       # minimum candles between consecutive BUYs
+MAX_BTC_ALLOCATION  = 0.60    # max 60 % of portfolio value in BTC before blocking new BUY
 
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
@@ -96,17 +100,76 @@ def fetch_historical_batched(pair: str = "BTC/USDT",
     return df
 
 
+_YF_INTERVAL_MAP = {
+    "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d",
+}
+_YF_PERIOD_MAP = {
+    "1m": "7d", "5m": "60d", "15m": "60d", "1h": "730d", "4h": "730d", "1d": "730d",
+}
+
+
+def fetch_historical_yfinance(pair: str = "BTC/USDT",
+                               timeframe: str = "1h",
+                               limit: int = 1000) -> pd.DataFrame:
+    """Fetch data historis nyata via yfinance (gratis, tanpa API key)."""
+    import yfinance as yf
+
+    # Yahoo Finance uses USD, not USDT: BTC/USDT → BTC-USD
+    ticker = pair.replace("/USDT", "-USD").replace("/", "-")
+    interval = _YF_INTERVAL_MAP.get(timeframe, "1h")
+    period   = _YF_PERIOD_MAP.get(timeframe, "730d")
+
+    logger.info(f"yfinance: fetching {ticker} {interval} (period={period})...")
+    raw = yf.download(ticker, interval=interval, period=period,
+                      auto_adjust=True, progress=False)
+
+    if raw.empty:
+        raise ValueError(f"yfinance: tidak ada data untuk {ticker} {interval}")
+
+    # Flatten MultiIndex columns jika ada
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = raw.columns.get_level_values(0)
+
+    # Capture datetime index before lowercasing columns
+    raw = raw.reset_index()
+    raw.columns = [str(c).lower() for c in raw.columns]
+
+    # Find the timestamp column (could be 'datetime', 'date', 'index', etc.)
+    ts_col = next(
+        (c for c in raw.columns if c in ("datetime", "date", "timestamp", "index")),
+        raw.columns[0],
+    )
+    raw = raw.rename(columns={ts_col: "timestamp"})
+    raw["timestamp"] = pd.to_datetime(raw["timestamp"]).dt.tz_localize(None)
+
+    df = raw[["timestamp", "open", "high", "low", "close", "volume"]].copy()
+    df = df.dropna().sort_values("timestamp").reset_index(drop=True)
+
+    if limit and len(df) > limit:
+        df = df.tail(limit).reset_index(drop=True)
+
+    logger.info(
+        f"yfinance: {len(df)} candles "
+        f"({df['timestamp'].iloc[0].strftime('%Y-%m-%d')} -> "
+        f"{df['timestamp'].iloc[-1].strftime('%Y-%m-%d')})"
+    )
+    return df
+
+
 def fetch_historical(pair: str = "BTC/USDT",
                      timeframe: str = "1h",
                      limit: int = 500,
-                     use_mainnet: bool = False) -> pd.DataFrame:
+                     use_mainnet: bool = False,
+                     use_yfinance: bool = False) -> pd.DataFrame:
     """
-    Fetch OHLCV historis dari Binance.
+    Fetch OHLCV historis.
 
-    use_mainnet=False  → Binance testnet, batched fetch (N_BATCHES × BATCH_SIZE)
-    use_mainnet=True   → Binance mainnet public endpoint (tanpa API key,
-                         data historis jauh lebih banyak tersedia)
+    use_yfinance=True  → yfinance (data nyata, gratis, direkomendasikan)
+    use_mainnet=True   → Binance mainnet public (tanpa API key)
+    default            → Binance testnet (data terbatas ~200 candles)
     """
+    if use_yfinance:
+        return fetch_historical_yfinance(pair, timeframe, limit)
     if use_mainnet:
         import ccxt
         exchange = ccxt.binance({
@@ -138,7 +201,9 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 # ── Rule-based signal (simulates Claude's logic) ──────────────────────────────
 
 def _rule_signal(rsi: float, ma50: float, ma200: float | None,
-                 hmm_state: str) -> str:
+                 hmm_state: str, price: float = 0.0,
+                 macd: float = float("nan"),
+                 macd_signal: float = float("nan")) -> str:
     """
     Three independent signals vote: RSI, MA crossover, HMM.
     Require ≥ 2 votes in same direction to execute; otherwise HOLD.
@@ -179,11 +244,56 @@ class _Portfolio:
         self.usdt       = initial_capital
         self.btc        = 0.0
         self.avg_cost   = 0.0   # weighted average buy price (USDT per BTC)
+        # Short position tracking
+        self.short_entry_price: float | None = None
+        self.short_btc:         float        = 0.0
         self.trades: list[dict] = []
         self.equity_curve: list[float] = []
 
+    @property
+    def has_short(self) -> bool:
+        return self.short_entry_price is not None and self.short_btc > 0
+
     def equity(self, price: float) -> float:
-        return self.usdt + self.btc * price
+        short_pnl = 0.0
+        if self.has_short:
+            short_pnl = (self.short_entry_price - price) * self.short_btc
+        return self.usdt + self.btc * price + short_pnl
+
+    def open_short(self, price: float, size_pct: float, timestamp: str) -> dict | None:
+        exec_price = price * (1 - SLIPPAGE)
+        collateral = self.usdt * size_pct
+        fee        = collateral * FEE_RATE
+        if collateral - fee < 10:
+            return None
+        btc_shorted = (collateral - fee) / exec_price
+        self.short_entry_price = exec_price
+        self.short_btc         = btc_shorted
+        self.usdt             -= fee
+        trade = {
+            "timestamp": timestamp, "action": "SHORT_OPEN",
+            "price": exec_price, "btc_amount": btc_shorted,
+            "usdt_amount": collateral, "fee": fee, "pnl": None,
+        }
+        self.trades.append(trade)
+        return trade
+
+    def close_short(self, price: float, timestamp: str) -> dict | None:
+        if not self.has_short:
+            return None
+        exec_price = price * (1 + SLIPPAGE)
+        fee        = exec_price * self.short_btc * FEE_RATE
+        pnl        = (self.short_entry_price - exec_price) * self.short_btc - fee
+        self.usdt += pnl
+        trade = {
+            "timestamp": timestamp, "action": "SHORT_CLOSE",
+            "price": exec_price, "btc_amount": self.short_btc,
+            "usdt_amount": exec_price * self.short_btc, "fee": fee, "pnl": pnl,
+        }
+        self.trades.append(trade)
+        self.short_entry_price = None
+        self.short_btc         = 0.0
+        return trade
 
     def buy(self, price: float, size_pct: float, timestamp: str) -> dict | None:
         exec_price = price * (1 + SLIPPAGE)
@@ -272,13 +382,16 @@ def _compute_metrics(portfolio: _Portfolio,
     else:
         sharpe = 0.0
 
-    # Win rate + profit factor (from SELL trades only)
-    sells = [t for t in portfolio.trades if t["action"] == "SELL" and t["pnl"] is not None]
-    wins  = [t for t in sells if t["pnl"] > 0]
+    # Win rate + profit factor (SELL closes + SHORT_CLOSE trades)
+    closed = [
+        t for t in portfolio.trades
+        if t["action"] in ("SELL", "SHORT_CLOSE") and t["pnl"] is not None
+    ]
+    wins         = [t for t in closed if t["pnl"] > 0]
     gross_profit = sum(t["pnl"] for t in wins)
-    gross_loss   = abs(sum(t["pnl"] for t in sells if t["pnl"] <= 0))
+    gross_loss   = abs(sum(t["pnl"] for t in closed if t["pnl"] <= 0))
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
-    win_rate_pct  = len(wins) / len(sells) * 100 if sells else 0.0
+    win_rate_pct  = len(wins) / len(closed) * 100 if closed else 0.0
 
     total_trades = len(portfolio.trades)
     total_fees   = sum(t["fee"] for t in portfolio.trades)
@@ -290,8 +403,10 @@ def _compute_metrics(portfolio: _Portfolio,
         "max_drawdown_pct": round(max_dd, 3),
         "sharpe_ratio": round(sharpe, 3),
         "total_trades": total_trades,
-        "buy_trades": sum(1 for t in portfolio.trades if t["action"] == "BUY"),
-        "sell_trades": len(sells),
+        "buy_trades":        sum(1 for t in portfolio.trades if t["action"] == "BUY"),
+        "sell_trades":       sum(1 for t in portfolio.trades if t["action"] == "SELL"),
+        "short_open_trades": sum(1 for t in portfolio.trades if t["action"] == "SHORT_OPEN"),
+        "short_close_trades":sum(1 for t in portfolio.trades if t["action"] == "SHORT_CLOSE"),
         "profit_factor": round(profit_factor, 3) if math.isfinite(profit_factor) else None,
         "total_fees_usdt": round(total_fees, 4),
     }
@@ -306,19 +421,27 @@ class Backtester:
                  timeframe: str = "1h",
                  n_candles: int = 500,
                  warmup_candles: int = 200,
-                 use_mainnet: bool = False):
+                 use_mainnet: bool = False,
+                 use_yfinance: bool = False):
         self.initial_capital = initial_capital
         self.pair            = pair
         self.timeframe       = timeframe
         self.n_candles       = n_candles
         self.warmup_candles  = warmup_candles
         self.use_mainnet     = use_mainnet
+        self.use_yfinance    = use_yfinance
 
     def run(self) -> dict:
-        source = "Binance mainnet (public)" if self.use_mainnet else "Binance testnet"
+        if self.use_yfinance:
+            source = "yfinance (data nyata)"
+        elif self.use_mainnet:
+            source = "Binance mainnet (public)"
+        else:
+            source = "Binance testnet"
         logger.info(f"Backtest: fetching {self.n_candles} candles dari {source} "
                     f"({self.pair} {self.timeframe})...")
-        raw = fetch_historical(self.pair, self.timeframe, self.n_candles, self.use_mainnet)
+        raw = fetch_historical(self.pair, self.timeframe, self.n_candles,
+                               self.use_mainnet, self.use_yfinance)
         df  = add_indicators(raw)
 
         n_available = len(df)
@@ -359,29 +482,65 @@ class Backtester:
         logger.info("Computing HMM states for all candles (single forward pass)...")
         all_states = hmm.predict_sequence(df)   # list[(label, conf)]
 
-        portfolio = _Portfolio(self.initial_capital)
+        portfolio  = _Portfolio(self.initial_capital)
+        last_buy_t = warmup - MIN_BUY_COOLDOWN - 1  # allow buy on first candle
 
         # Walk-forward simulation — candle t: decision on t, execute at close[t]
         for t in range(warmup, len(df)):
             row       = df.iloc[t]
             hmm_label = all_states[t][0]
 
-            rsi  = row["rsi"]
-            ma50 = row["ma50"]
-            ma200 = None if pd.isna(row.get("ma200", float("nan"))) else row["ma200"]
-            price = row["close"]
-            ts    = row["timestamp"].isoformat()
+            rsi         = row["rsi"]
+            ma50        = row["ma50"]
+            ma200       = None if pd.isna(row.get("ma200", float("nan"))) else row["ma200"]
+            macd        = row.get("macd", float("nan"))
+            macd_sig    = row.get("macd_signal", float("nan"))
+            price       = row["close"]
+            ts          = row["timestamp"].isoformat()
 
             if pd.isna(rsi) or pd.isna(ma50):
                 portfolio.equity_curve.append(portfolio.equity(price))
                 continue
 
-            action = _rule_signal(rsi, ma50, ma200, hmm_label)
+            # ── 1. TP / SL for LONG position ──────────────────────────────────
+            if portfolio.btc > 0 and portfolio.avg_cost > 0:
+                unrealized = (price - portfolio.avg_cost) / portfolio.avg_cost
+                if unrealized >= TAKE_PROFIT_PCT:
+                    portfolio.sell(price, 1.00, ts)
+                    last_buy_t = t          # cooldown after TP exit
+                elif unrealized <= -STOP_LOSS_PCT:
+                    portfolio.sell(price, 1.00, ts)
+                    last_buy_t = t + MIN_BUY_COOLDOWN  # longer cooldown after SL
+
+            # ── 2. TP / SL for SHORT position ─────────────────────────────────
+            if portfolio.has_short and portfolio.short_entry_price:
+                short_unrealized = (portfolio.short_entry_price - price) / portfolio.short_entry_price
+                if short_unrealized >= TAKE_PROFIT_PCT:
+                    portfolio.close_short(price, ts)   # price fell → profit
+                elif short_unrealized <= -STOP_LOSS_PCT:
+                    portfolio.close_short(price, ts)   # price rose  → cut loss
+
+            # ── 3. Rule signal ─────────────────────────────────────────────────
+            action = _rule_signal(rsi, ma50, ma200, hmm_label, price, macd, macd_sig)
 
             if action == "BUY":
-                portfolio.buy(price, BUY_SIZE_PCT, ts)
+                btc_alloc   = (portfolio.btc * price / portfolio.equity(price)
+                               if portfolio.equity(price) > 0 else 0)
+                cooldown_ok = (t - last_buy_t) >= MIN_BUY_COOLDOWN
+                alloc_ok    = btc_alloc < MAX_BTC_ALLOCATION
+                if cooldown_ok and alloc_ok:
+                    if portfolio.has_short:
+                        portfolio.close_short(price, ts)
+                    trade = portfolio.buy(price, BUY_SIZE_PCT, ts)
+                    if trade:
+                        last_buy_t = t
             elif action == "SELL":
-                portfolio.sell(price, SELL_SIZE_PCT, ts)
+                if portfolio.btc > 0:
+                    portfolio.sell(price, SELL_SIZE_PCT, ts)   # exit long
+                # Short selling disabled: requires more refined signal quality
+                # Uncomment below to enable (needs death cross filter + HMM confirmation):
+                # if not portfolio.has_short and ma200 and ma50 < ma200:
+                #     portfolio.open_short(price, BUY_SIZE_PCT, ts)
 
             portfolio.equity_curve.append(portfolio.equity(price))
 
@@ -397,7 +556,7 @@ class Backtester:
                 "timeframe": self.timeframe,
                 "n_candles": self.n_candles,
                 "warmup_candles": warmup,
-                "data_source": "mainnet" if self.use_mainnet else "testnet",
+                "data_source": "yfinance" if self.use_yfinance else ("mainnet" if self.use_mainnet else "testnet"),
             },
             "period": {"start": backtest_start, "end": backtest_end},
             "metrics": metrics,

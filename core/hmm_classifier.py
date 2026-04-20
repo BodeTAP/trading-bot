@@ -295,6 +295,22 @@ class HMMClassifier:
         logger.info(f"HMM trained on {len(features)} candles. "
                     f"Mean log_returns (scaled) per state: {state_info}")
 
+        # Sanity check: if BULL/EUPHORIA have negative mean returns,
+        # their labels are unreliable — remap them to NEUTRAL to avoid false BUY signals.
+        for idx, label in list(self._state_map.items()):
+            if label in ("BULL", "EUPHORIA") and mean_returns[idx] < 0:
+                logger.warning(
+                    f"HMM state '{label}' has negative mean return "
+                    f"({mean_returns[idx]:.4f}) — remapped to NEUTRAL"
+                )
+                self._state_map[idx] = "NEUTRAL"
+            if label in ("BEAR", "CRASH") and mean_returns[idx] > 0:
+                logger.warning(
+                    f"HMM state '{label}' has positive mean return "
+                    f"({mean_returns[idx]:.4f}) — remapped to NEUTRAL"
+                )
+                self._state_map[idx] = "NEUTRAL"
+
     def needs_retrain(self) -> bool:
         if not self.is_fitted or self._last_trained is None:
             return True

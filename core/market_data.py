@@ -12,13 +12,32 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-_exchange: ccxt.binance | None = None
+_exchange:         ccxt.binance | None = None
+_futures_exchange: ccxt.binance | None = None
 
 # Candle limits per timeframe (must be ≥200 for MA200 to compute cleanly)
 _TF_LIMIT: dict[str, int] = {
     "1m": 300, "5m": 250, "15m": 200,
     "1h": 250, "4h": 200, "1d": 300,
 }
+
+
+def get_futures_exchange() -> ccxt.binance:
+    """Return a Binance USDT-margined futures exchange (testnet or live)."""
+    global _futures_exchange
+    if _futures_exchange is None:
+        api_key = os.getenv('BINANCE_API_KEY')
+        secret  = os.getenv('BINANCE_SECRET_KEY')
+        if not api_key or not secret:
+            raise ValueError("BINANCE_API_KEY atau BINANCE_SECRET_KEY tidak ditemukan di environment")
+        sandbox = os.getenv('BINANCE_SANDBOX', 'true').lower() != 'false'
+        _futures_exchange = ccxt.binance({
+            'apiKey': api_key,
+            'secret': secret,
+            'options': {'defaultType': 'future'},
+            'sandbox': sandbox,
+        })
+    return _futures_exchange
 
 
 def get_exchange() -> ccxt.binance:
