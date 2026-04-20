@@ -191,8 +191,9 @@ def run_bot():
             lines.append(ens_line)
         if fg_line:
             lines.append(fg_line)
+        base = PAIR.split('/')[0]
         lines.append(
-            f"📈 BTC: <b>${btc_price:,.0f}</b>{btc_chg_str}"
+            f"📈 {base}: <b>${btc_price:,.0f}</b>{btc_chg_str}"
         )
         lines.append(ts_line)
         lines.append(f"⏱ Sesi berikutnya: {next_str}")
@@ -212,12 +213,13 @@ def run_bot():
         try:
             p = get_portfolio_status()
             state.portfolio = p
+            _base = PAIR.split('/')[0]
             notifier._send(
                 f"💰 <b>Balance (Live)</b>\n\n"
                 f"  • Total: <b>${p['total_value_usdt']:,.2f}</b>\n"
                 f"  • USDT: ${p['usdt_available']:,.2f}\n"
-                f"  • BTC: {p['btc_held']:.6f} BTC\n"
-                f"  • Harga BTC: ${p['btc_price']:,.2f}"
+                f"  • {_base}: {p['btc_held']:.6f} {_base}\n"
+                f"  • Harga {_base}: ${p['btc_price']:,.2f}"
             )
         except Exception as e:
             notifier._send(f"❌ Gagal mengambil balance: {e}")
@@ -528,7 +530,7 @@ def run_bot():
             )
             risk_manager.log_decision(decision, portfolio)
 
-            notifier.notify_decision(decision, portfolio)
+            notifier.notify_decision(decision, portfolio, pair=PAIR)
 
             # ── 10. Execute (respect trading_enabled / pause) ─────────────────
             if not state.trading_enabled:

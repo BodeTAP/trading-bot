@@ -61,8 +61,11 @@ class TelegramNotifier:
         logger.error(f"Telegram: pesan gagal dikirim setelah {max_retries} attempt")
         return False
 
-    def notify_decision(self, decision: dict, portfolio: dict) -> None:
+    def notify_decision(self, decision: dict, portfolio: dict,
+                        pair: str = "BTC/USDT") -> None:
         """Notifikasi keputusan trading dari Claude."""
+        base = pair.split('/')[0]   # "BTC", "ETH", dll
+
         action = decision.get('action', 'HOLD')
         confidence = decision.get('confidence', 'LOW')
         size_pct = decision.get('size_pct', 0)
@@ -70,10 +73,10 @@ class TelegramNotifier:
         stop_loss = decision.get('stop_loss_pct', 0)
         take_profit = decision.get('take_profit_pct', 0)
 
-        btc_price = portfolio.get('btc_price', 0)
+        coin_price = portfolio.get('btc_price', 0)
         total_value = portfolio.get('total_value_usdt', 0)
         usdt_available = portfolio.get('usdt_available', 0)
-        btc_held = portfolio.get('btc_held', 0)
+        coin_held = portfolio.get('btc_held', 0)
 
         action_emoji = _ACTION_EMOJI.get(action, '⚪')
         conf_emoji = _CONFIDENCE_EMOJI.get(confidence, '')
@@ -82,15 +85,15 @@ class TelegramNotifier:
             usdt_used = usdt_available * (size_pct / 100)
             size_detail = f"${usdt_used:,.2f} USDT ({size_pct}% dari available)"
         elif action == 'SELL':
-            btc_sold = btc_held * (size_pct / 100)
-            size_detail = f"{btc_sold:.6f} BTC ({size_pct}% dari held)"
+            coin_sold = coin_held * (size_pct / 100)
+            size_detail = f"{coin_sold:.6f} {base} ({size_pct}% dari held)"
         else:
             size_detail = "—"
 
         lines = [
             f"{action_emoji} <b>Trading Decision: {action}</b>",
             "",
-            f"💰 <b>Harga BTC:</b> ${btc_price:,.2f}",
+            f"💰 <b>Harga {base}:</b> ${coin_price:,.2f}",
             f"📊 <b>Confidence:</b> {conf_emoji} {confidence}",
             f"📦 <b>Size:</b> {size_detail}",
         ]
@@ -108,7 +111,7 @@ class TelegramNotifier:
             "📂 <b>Portfolio</b>",
             f"  • Total: ${total_value:,.2f}",
             f"  • USDT: ${usdt_available:,.2f}",
-            f"  • BTC: {btc_held:.6f} BTC",
+            f"  • {base}: {coin_held:.6f} {base}",
         ]
 
         self._send("\n".join(lines))
