@@ -10,6 +10,7 @@ from core.market_data import fetch_multi_timeframe, get_portfolio_status, format
 from core.claude_brain import ask_claude
 from core.risk_manager import RiskManager
 from core.executor import Executor
+from core.state_persistence import store
 from core.telegram_notifier import TelegramNotifier, TelegramCommandHandler
 from core.hmm_classifier import HMMClassifier
 from core.sentiment import SentimentFetcher
@@ -89,6 +90,51 @@ def _extract_atr(df: pd.DataFrame) -> tuple[float | None, float | None]:
     return current_atr, avg_atr
 
 
+def _restore_state(executor: Executor, state: "BotState") -> None:
+    """Restore TrailingStop, TakeProfit, dan pause_until dari disk setelah restart."""
+    saved = store.all()
+    if not saved:
+        return
+
+    ts = saved.get("trailing_stop")
+    if ts:
+        try:
+            executor.trailing_stop._pair        = ts["pair"]
+            executor.trailing_stop._entry_price = float(ts["entry_price"])
+            executor.trailing_stop._highest     = float(ts["highest"])
+            executor.trailing_stop._stop        = float(ts["stop"])
+            executor.trailing_stop._atr         = float(ts["atr"])
+            executor.trailing_stop._multiplier  = float(ts["multiplier"])
+            logger.info(
+                f"State restored — Trailing Stop: pair={ts['pair']} "
+                f"entry=${ts['entry_price']:,.2f} stop=${ts['stop']:,.2f}"
+            )
+        except Exception as e:
+            logger.warning(f"Gagal restore trailing stop: {e}")
+
+    tp = saved.get("take_profit")
+    if tp:
+        try:
+            executor.take_profit._entry_price     = float(tp["entry_price"])
+            executor.take_profit._target_price    = float(tp["target_price"])
+            executor.take_profit._take_profit_pct = float(tp["take_profit_pct"])
+            logger.info(
+                f"State restored — Take Profit: target=${tp['target_price']:,.2f}"
+            )
+        except Exception as e:
+            logger.warning(f"Gagal restore take profit: {e}")
+
+    pu = saved.get("pause_until")
+    if pu:
+        try:
+            pause_dt = datetime.fromisoformat(pu)
+            if pause_dt > datetime.now():
+                state.pause_until = pause_dt
+                logger.info(f"State restored — Bot dijeda hingga {pause_dt.strftime('%H:%M:%S')}")
+        except Exception as e:
+            logger.warning(f"Gagal restore pause_until: {e}")
+
+
 def run_bot():
     _validate_env()
 
@@ -106,6 +152,9 @@ def run_bot():
     regime_detector   = RegimeDetector()
     previous_regime:  str | None = None
     state             = BotState()
+
+    # ── Restore state dari disk (setelah crash / restart) ─────────────────────
+    _restore_state(executor, state)
 
     # ── Hot-reload config from .env ───────────────────────────────────────────
     def _reload_config() -> list[str]:
@@ -253,6 +302,7 @@ def run_bot():
     def _cmd_start(*_):
         state.trading_enabled = True
         state.pause_until = None
+        store.clear_key("pause_until")
         notifier._send("✅ <b>Trading diaktifkan kembali.</b>")
 
     def _cmd_balance(*_):
@@ -278,6 +328,7 @@ def run_bot():
             except ValueError:
                 pass
         state.pause_until = datetime.now() + timedelta(minutes=minutes)
+        store.set("pause_until", state.pause_until.isoformat())
         notifier._send(
             f"⏸ <b>Trading dijeda selama {minutes} menit.</b>\n"
             f"Resume otomatis pukul {state.pause_until.strftime('%H:%M:%S')}.\n"

@@ -2,6 +2,7 @@ import logging
 import os
 from dotenv import load_dotenv
 from core.market_data import get_exchange, get_futures_exchange
+from core.state_persistence import store
 
 load_dotenv()
 
@@ -58,6 +59,11 @@ class TrailingStopManager:
         self._highest = entry_price
         self._atr     = atr
         self._stop    = entry_price - atr * multiplier
+        store.set("trailing_stop", {
+            "pair": pair, "entry_price": entry_price,
+            "highest": entry_price, "stop": self._stop,
+            "atr": atr, "multiplier": multiplier,
+        })
         logger.info(
             f"Trailing stop started: entry=${entry_price:,.2f} "
             f"ATR={atr:.2f} ×{multiplier} → initial stop=${self._stop:,.2f}"
@@ -80,6 +86,11 @@ class TrailingStopManager:
                 )
                 self._stop    = new_stop
                 self._highest = current_price
+                store.set("trailing_stop", {
+                    "pair": self._pair, "entry_price": self._entry_price,
+                    "highest": self._highest, "stop": self._stop,
+                    "atr": self._atr, "multiplier": self._multiplier,
+                })
 
         if current_price <= self._stop:
             logger.warning(
@@ -105,6 +116,7 @@ class TrailingStopManager:
         self._highest     = None
         self._stop        = None
         self._atr         = None
+        store.clear_key("trailing_stop")
         logger.info("Trailing stop cleared.")
 
 
@@ -207,6 +219,11 @@ class TakeProfitManager:
         self._entry_price     = entry_price
         self._take_profit_pct = take_profit_pct
         self._target_price    = entry_price * (1 + take_profit_pct / 100)
+        store.set("take_profit", {
+            "entry_price": entry_price,
+            "target_price": self._target_price,
+            "take_profit_pct": take_profit_pct,
+        })
         logger.info(
             f"Take profit set: entry=${entry_price:,.2f} "
             f"+{take_profit_pct:.1f}% → target=${self._target_price:,.2f}"
@@ -219,6 +236,7 @@ class TakeProfitManager:
         self._entry_price     = None
         self._target_price    = None
         self._take_profit_pct = None
+        store.clear_key("take_profit")
         logger.info("Take profit tracker cleared.")
 
 
