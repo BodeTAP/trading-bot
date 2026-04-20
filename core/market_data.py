@@ -103,24 +103,25 @@ def fetch_multi_timeframe(pair: str = 'BTC/USDT') -> dict[str, pd.DataFrame]:
     return result
 
 
-def get_portfolio_status() -> dict:
+def get_portfolio_status(pair: str = 'BTC/USDT') -> dict:
     exchange = get_exchange()
-    balance = exchange.fetch_balance()
+    balance  = exchange.fetch_balance()
+    base     = pair.split('/')[0]   # 'BTC', 'ETH', 'BNB', dll
 
     usdt = float(balance.get('USDT', {}).get('free', 0) or 0)
-    btc = float(balance.get('BTC', {}).get('total', 0) or 0)
+    coin = float(balance.get(base, {}).get('total', 0) or 0)
 
-    ticker = exchange.fetch_ticker('BTC/USDT')
-    btc_price = float(ticker.get('last') or 0)
-    if btc_price <= 0:
-        raise ValueError("Harga BTC tidak valid dari exchange")
+    ticker    = exchange.fetch_ticker(pair)
+    coin_price = float(ticker.get('last') or 0)
+    if coin_price <= 0:
+        raise ValueError(f"Harga {base} tidak valid dari exchange")
 
     return {
-        'usdt_available': usdt,
-        'btc_held': btc,
-        'btc_value_usdt': btc * btc_price,
-        'btc_price': btc_price,
-        'total_value_usdt': usdt + (btc * btc_price),
+        'usdt_available':  usdt,
+        'btc_held':        coin,           # key dipertahankan agar kompatibel
+        'btc_value_usdt':  coin * coin_price,
+        'btc_price':       coin_price,
+        'total_value_usdt': usdt + (coin * coin_price),
     }
 
 
@@ -194,6 +195,7 @@ def format_context_for_claude(
     sentiment: dict | None = None,
     ensemble_result: dict | None = None,
     regime_result:  dict | None = None,
+    pair: str = 'BTC/USDT',
 ) -> str:
     # Use last valid row from primary df
     df_valid = df.dropna(subset=['rsi', 'ma50', 'macd'])
@@ -344,7 +346,7 @@ KONDISI PASAR (HMM Regime Classifier):
         )
 
     return f"""
-KONDISI PASAR SAAT INI - BTC/USDT
+KONDISI PASAR SAAT INI - {pair}
 
 Harga: ${latest['close']:,.2f}
 Perubahan 1 candle: {price_change:.2f}%

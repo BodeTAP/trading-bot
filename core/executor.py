@@ -232,7 +232,8 @@ class Executor:
         self.short_manager  = ShortManager()
 
     def execute(self, decision: dict, portfolio: dict,
-                atr: float | None = None, regime: str | None = None) -> dict:
+                atr: float | None = None, regime: str | None = None,
+                pair: str = 'BTC/USDT') -> dict:
         action   = decision['action']
         size_pct = decision.get('size_pct', 0)
 
@@ -242,19 +243,19 @@ class Executor:
 
         try:
             if action == 'BUY':
-                result = self._buy(size_pct, portfolio)
+                result = self._buy(size_pct, portfolio, pair)
                 if result.get('status') == 'success':
                     entry = portfolio.get('btc_price', 0)
                     if entry > 0:
                         if atr:
                             mult = _REGIME_ATR_MULT.get(regime, 2.0) if regime else 2.0
-                            self.trailing_stop.track_position('BTC/USDT', entry, atr,
+                            self.trailing_stop.track_position(pair, entry, atr,
                                                               atr_multiplier=mult)
                         tp_pct = decision.get('take_profit_pct', 4.0)
                         self.take_profit.track_position(entry, tp_pct)
                 return result
             elif action == 'SELL':
-                result = self._sell(size_pct, portfolio)
+                result = self._sell(size_pct, portfolio, pair)
                 if result.get('status') == 'success':
                     self.trailing_stop.clear_position()
                     self.take_profit.clear_position()
@@ -266,10 +267,10 @@ class Executor:
             logger.error(f"Error eksekusi order: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
-    def execute_take_profit_sell(self, portfolio: dict) -> dict:
-        """Sell 50% of BTC position when take-profit target is reached."""
+    def execute_take_profit_sell(self, portfolio: dict, pair: str = 'BTC/USDT') -> dict:
+        """Sell 50% of position when take-profit target is reached."""
         try:
-            result = self._sell(50.0, portfolio)
+            result = self._sell(50.0, portfolio, pair)
             if result.get('status') == 'success':
                 self.take_profit.clear_position()
             return result
@@ -277,10 +278,10 @@ class Executor:
             logger.error(f"Take profit SELL gagal: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
-    def execute_trailing_stop_sell(self, portfolio: dict) -> dict:
-        """Force-sell 100% of BTC position when trailing stop is triggered."""
+    def execute_trailing_stop_sell(self, portfolio: dict, pair: str = 'BTC/USDT') -> dict:
+        """Force-sell 100% of position when trailing stop is triggered."""
         try:
-            result = self._sell(100.0, portfolio)
+            result = self._sell(100.0, portfolio, pair)
             if result.get('status') == 'success':
                 self.trailing_stop.clear_position()
             return result
@@ -288,10 +289,11 @@ class Executor:
             logger.error(f"Trailing stop SELL gagal: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
-    def _buy(self, size_pct: float, portfolio: dict) -> dict:
-        btc_price = portfolio.get('btc_price', 0)
-        if btc_price <= 0:
-            raise ValueError("Harga BTC tidak valid, tidak bisa eksekusi BUY")
+    def _buy(self, size_pct: float, portfolio: dict, pair: str = 'BTC/USDT') -> dict:
+        base      = pair.split('/')[0]
+        coin_price = portfolio.get('btc_price', 0)
+        if coin_price <= 0:
+            raise ValueError(f"Harga {base} tidak valid, tidak bisa eksekusi BUY")
 
         usdt_to_use = portfolio['usdt_available'] * (size_pct / 100)
 
@@ -299,30 +301,31 @@ class Executor:
             logger.warning(f"Order BUY terlalu kecil: ${usdt_to_use:.2f} (min ${MIN_USDT_ORDER})")
             return {"status": "skipped", "reason": f"order terlalu kecil (${usdt_to_use:.2f})"}
 
-        btc_amount = round(usdt_to_use / btc_price, 6)
-        if btc_amount < MIN_BTC_ORDER:
-            logger.warning(f"BTC amount terlalu kecil: {btc_amount}")
-            return {"status": "skipped", "reason": f"BTC amount terlalu kecil ({btc_amount})"}
+        coin_amount = round(usdt_to_use / coin_price, 6)
+        if coin_amount < MIN_BTC_ORDER:
+            logger.warning(f"{base} amount terlalu kecil: {coin_amount}")
+            return {"status": "skipped", "reason": f"{base} amount terlalu kecil ({coin_amount})"}
 
-        logger.info(f"BUY {btc_amount} BTC (${usdt_to_use:,.2f} USDT @ ${btc_price:,.2f})")
-        order = self.exchange.create_market_buy_order('BTC/USDT', btc_amount)
+        logger.info(f"BUY {coin_amount} {base} (${usdt_to_use:,.2f} USDT @ ${coin_price:,.2f})")
+        order = self.exchange.create_market_buy_order(pair, coin_amount)
         logger.info(f"Order BUY berhasil: {order['id']}")
         return {"status": "success", "order": order}
 
-    def _sell(self, size_pct: float, portfolio: dict) -> dict:
-        btc_to_sell = round(portfolio['btc_held'] * (size_pct / 100), 6)
+    def _sell(self, size_pct: float, portfolio: dict, pair: str = 'BTC/USDT') -> dict:
+        base        = pair.split('/')[0]
+        coin_to_sell = round(portfolio['btc_held'] * (size_pct / 100), 6)
 
-        if btc_to_sell < MIN_BTC_ORDER:
-            logger.warning(f"BTC to sell terlalu kecil: {btc_to_sell}")
-            return {"status": "skipped", "reason": f"BTC amount terlalu kecil ({btc_to_sell})"}
+        if coin_to_sell < MIN_BTC_ORDER:
+            logger.warning(f"{base} to sell terlalu kecil: {coin_to_sell}")
+            return {"status": "skipped", "reason": f"{base} amount terlalu kecil ({coin_to_sell})"}
 
-        btc_price  = portfolio.get('btc_price', 0)
-        usdt_value = btc_to_sell * btc_price
+        coin_price  = portfolio.get('btc_price', 0)
+        usdt_value  = coin_to_sell * coin_price
         if usdt_value < MIN_USDT_ORDER:
             logger.warning(f"Notional SELL terlalu kecil: ${usdt_value:.2f}")
             return {"status": "skipped", "reason": f"notional terlalu kecil (${usdt_value:.2f})"}
 
-        logger.info(f"SELL {btc_to_sell} BTC (≈ ${usdt_value:,.2f} USDT)")
-        order = self.exchange.create_market_sell_order('BTC/USDT', btc_to_sell)
+        logger.info(f"SELL {coin_to_sell} {base} (≈ ${usdt_value:,.2f} USDT)")
+        order = self.exchange.create_market_sell_order(pair, coin_to_sell)
         logger.info(f"Order SELL berhasil: {order['id']}")
         return {"status": "success", "order": order}

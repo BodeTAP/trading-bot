@@ -211,7 +211,7 @@ def run_bot():
 
     def _cmd_balance(*_):
         try:
-            p = get_portfolio_status()
+            p = get_portfolio_status(PAIR)
             state.portfolio = p
             _base = PAIR.split('/')[0]
             notifier._send(
@@ -302,7 +302,7 @@ def run_bot():
     health_checker.start()
 
     try:
-        initial_portfolio = get_portfolio_status()
+        initial_portfolio = get_portfolio_status(PAIR)
         risk_manager.set_starting_balance(initial_portfolio['total_value_usdt'])
     except Exception as e:
         logger.critical(f"Gagal mengambil portfolio awal: {e}")
@@ -315,7 +315,7 @@ def run_bot():
             # ── 1. Trailing stop check (before fetching new data) ─────────────
             if executor.trailing_stop.is_active:
                 try:
-                    portfolio_ts = get_portfolio_status()
+                    portfolio_ts = get_portfolio_status(PAIR)
                     current_price = portfolio_ts['btc_price']
                     stop_price    = executor.trailing_stop.get_current_stop()
                     dist_pct      = executor.trailing_stop.stop_distance_pct(current_price)
@@ -328,7 +328,7 @@ def run_bot():
                             f"Trailing stop terkena di ${current_price:,.2f} "
                             f"(stop=${stop_price:,.2f}) — eksekusi SELL"
                         )
-                        ts_result = executor.execute_trailing_stop_sell(portfolio_ts)
+                        ts_result = executor.execute_trailing_stop_sell(portfolio_ts, pair=PAIR)
                         if ts_result.get('status') == 'success':
                             notifier._send(
                                 f"🛑 <b>Trailing Stop Terkena</b>\n\n"
@@ -348,7 +348,7 @@ def run_bot():
             # ── 1b. Take-profit check ─────────────────────────────────────────
             if executor.take_profit.is_active:
                 try:
-                    portfolio_tp  = get_portfolio_status()
+                    portfolio_tp  = get_portfolio_status(PAIR)
                     current_price = portfolio_tp['btc_price']
                     target_price  = executor.take_profit.target_price
                     logger.info(
@@ -359,7 +359,7 @@ def run_bot():
                         logger.info(
                             f"Take profit terkena di ${current_price:,.2f} — eksekusi SELL 50%"
                         )
-                        tp_result = executor.execute_take_profit_sell(portfolio_tp)
+                        tp_result = executor.execute_take_profit_sell(portfolio_tp, pair=PAIR)
                         if tp_result.get('status') == 'success':
                             notifier._send(
                                 f"✅ <b>Take Profit Terkena</b>\n\n"
@@ -381,7 +381,7 @@ def run_bot():
             tf_data    = fetch_multi_timeframe(PAIR)
             _df_medium = tf_data.get(TF_MEDIUM)
             df         = _df_medium if _df_medium is not None else next(iter(tf_data.values()))
-            portfolio  = get_portfolio_status()
+            portfolio  = get_portfolio_status(PAIR)
             state.portfolio = portfolio
             state.df        = df
 
@@ -493,6 +493,7 @@ def run_bot():
                 sentiment=sentiment,
                 ensemble_result=ensemble_result,
                 regime_result=regime_result,
+                pair=PAIR,
             )
 
             if confluence_text:
@@ -563,6 +564,7 @@ def run_bot():
                         decision, portfolio,
                         atr=current_atr,
                         regime=regime_result["regime"] if regime_result else None,
+                        pair=PAIR,
                     )
                     if result.get('status') == 'error':
                         msg = result.get('message', 'unknown')
