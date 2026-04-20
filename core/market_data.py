@@ -76,7 +76,8 @@ def fetch_market_data(pair: str = 'BTC/USDT', timeframe: str = '1h', limit: int 
 
     df['atr'] = AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
 
-    df_valid = df.dropna(subset=['rsi', 'ma50', 'macd'])
+    # Validate only on fast indicators; ma50/ma200 may be NaN for short histories
+    df_valid = df.dropna(subset=['rsi', 'macd'])
     if len(df_valid) < 2:
         raise ValueError("Data tidak cukup untuk menghitung indikator teknikal")
 
