@@ -319,22 +319,25 @@ def run_bot():
                     current_price = portfolio_ts['btc_price']
                     stop_price    = executor.trailing_stop.get_current_stop()
                     dist_pct      = executor.trailing_stop.stop_distance_pct(current_price)
+                    stop_str = f"${stop_price:,.2f}" if stop_price is not None else "N/A"
+                    dist_str = f"{dist_pct:.2f}%" if dist_pct is not None else "N/A"
                     logger.info(
                         f"Trailing stop aktif: harga=${current_price:,.2f} | "
-                        f"stop=${stop_price:,.2f} | jarak={dist_pct:.2f}%"
+                        f"stop={stop_str} | jarak={dist_str}"
                     )
                     if executor.trailing_stop.update_stop(current_price):
                         logger.warning(
                             f"Trailing stop terkena di ${current_price:,.2f} "
-                            f"(stop=${stop_price:,.2f}) — eksekusi SELL"
+                            f"(stop={stop_str}) — eksekusi SELL"
                         )
                         ts_result = executor.execute_trailing_stop_sell(portfolio_ts, pair=PAIR)
+                        base = PAIR.split('/')[0]
                         if ts_result.get('status') == 'success':
                             notifier._send(
                                 f"🛑 <b>Trailing Stop Terkena</b>\n\n"
                                 f"Harga: <b>${current_price:,.2f}</b>\n"
-                                f"Stop:  <b>${stop_price:,.2f}</b>\n"
-                                f"Seluruh posisi BTC dijual otomatis."
+                                f"Stop:  <b>{stop_str}</b>\n"
+                                f"Seluruh posisi {base} dijual otomatis."
                             )
                         else:
                             notifier.notify_error(

@@ -199,6 +199,8 @@ def format_context_for_claude(
 ) -> str:
     # Use last valid row from primary df
     df_valid = df.dropna(subset=['rsi', 'ma50', 'macd'])
+    if len(df_valid) < 2:
+        return "Data tidak cukup untuk analisis teknikal.", ""
     latest = df_valid.iloc[-1]
     prev = df_valid.iloc[-2]
 

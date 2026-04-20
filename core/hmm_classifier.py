@@ -140,7 +140,7 @@ class _GaussianHMM:
 
     # ── Baum-Welch EM ────────────────────────────────────────────────────────
 
-    def fit(self, X: np.ndarray) -> "_ GaussianHMM":
+    def fit(self, X: np.ndarray) -> "_GaussianHMM":
         self._init_params(X)
         T, D, K = len(X), X.shape[1], self.n_states
         prev_ll = -np.inf

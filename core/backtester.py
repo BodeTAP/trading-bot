@@ -305,9 +305,9 @@ class _Portfolio:
             return None
 
         btc_bought = usdt_spend_net / exec_price
-        # Update weighted average cost
+        # Update weighted average cost (include fees so PnL is accurate)
         total_btc = self.btc + btc_bought
-        self.avg_cost = (self.avg_cost * self.btc + exec_price * btc_bought) / total_btc
+        self.avg_cost = (self.avg_cost * self.btc + usdt_spend) / total_btc
         self.btc  += btc_bought
         self.usdt -= usdt_spend
 
