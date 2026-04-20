@@ -490,7 +490,7 @@ with col_refresh:
         st.cache_data.clear()
         st.rerun()
 
-tab_live, tab_bt = st.tabs(["📊 Live Trading", "🔬 Backtesting"])
+tab_live, tab_chart, tab_bt = st.tabs(["📊 Live Trading", "📈 Chart", "🔬 Backtesting"])
 
 # ═══════════════════════════════════════════════════════ TAB: Live Trading ════
 
@@ -885,6 +885,71 @@ with tab_live:
         st.toggle("Auto-Adjustment", value=_pm_auto, key="auto_adj_toggle",
                   on_change=_on_toggle,
                   help="Matikan untuk mencegah parameter diubah otomatis")
+
+# ═══════════════════════════════════════════════════════ TAB: Chart ══════════
+
+with tab_chart:
+    import streamlit.components.v1 as _components
+
+    # Convert pair format: "ETH/USDT" → "BINANCE:ETHUSD" for TradingView
+    _tv_pair = PAIR.replace("/", "")
+    _tv_symbol = f"BINANCE:{_tv_pair}"
+
+    # Timeframe mapping ke TradingView interval
+    _tf_env = os.getenv("TIMEFRAME_MEDIUM", os.getenv("TIMEFRAME", "1h"))
+    _tv_interval_map = {
+        "1m": "1", "3m": "3", "5m": "5", "15m": "15", "30m": "30",
+        "1h": "60", "2h": "120", "4h": "240", "6h": "360", "12h": "720",
+        "1d": "D", "1w": "W", "1M": "M",
+    }
+    _tv_interval = _tv_interval_map.get(_tf_env, "60")
+
+    st.markdown(
+        f"<div style='color:#94A3B8;font-size:0.85rem;margin-bottom:8px'>"
+        f"Symbol: <b style='color:#F1F5F9'>{_tv_symbol}</b> &nbsp;|&nbsp; "
+        f"Timeframe: <b style='color:#F1F5F9'>{_tf_env}</b> &nbsp;|&nbsp; "
+        f"Data: TradingView (real-time)"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    _tv_html = f"""
+    <div id="tv_chart_container" style="height:620px;border-radius:8px;overflow:hidden;">
+    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+    <script type="text/javascript">
+    new TradingView.widget({{
+        "autosize": true,
+        "symbol": "{_tv_symbol}",
+        "interval": "{_tv_interval}",
+        "timezone": "Asia/Jakarta",
+        "theme": "dark",
+        "style": "1",
+        "locale": "id",
+        "toolbar_bg": "#141720",
+        "enable_publishing": false,
+        "hide_side_toolbar": false,
+        "allow_symbol_change": true,
+        "save_image": true,
+        "container_id": "tv_chart_container",
+        "studies": [
+            "RSI@tv-basicstudies",
+            "MASimple@tv-basicstudies",
+            "MACD@tv-basicstudies"
+        ],
+        "show_popup_button": true,
+        "popup_width": "1000",
+        "popup_height": "650"
+    }});
+    </script>
+    </div>
+    """
+    _components.html(_tv_html, height=640, scrolling=False)
+
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    st.caption(
+        "Chart disediakan oleh TradingView. Indikator aktif: RSI, MA, MACD. "
+        "Klik ikon fullscreen di pojok kanan chart untuk tampilan lebih besar."
+    )
 
 # ═══════════════════════════════════════════════════════ TAB: Backtesting ═════
 
