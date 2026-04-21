@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from core.market_data import get_exchange, get_futures_exchange
 from core.state_persistence import store
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env', override=True)
 
 logger = logging.getLogger(__name__)
 

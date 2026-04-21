@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from core.position_sizer import PositionSizer
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env', override=True)
 
 logger = logging.getLogger(__name__)
 

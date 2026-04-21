@@ -5,9 +5,10 @@ import threading
 import time
 import requests
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env', override=True)
 
 logger = logging.getLogger(__name__)
 

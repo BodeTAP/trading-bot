@@ -21,7 +21,7 @@ from core.performance_monitor import PerformanceMonitor
 from core.log_cleaner import LogCleaner
 from core.health_check import HealthChecker
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / '.env', override=True)
 
 logging.basicConfig(
     level=logging.INFO,

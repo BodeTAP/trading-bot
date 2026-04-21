@@ -1,12 +1,13 @@
 import anthropic
 from dotenv import load_dotenv
+from pathlib import Path
 import os
 import json
 import logging
 import re
 import time
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env', override=True)
 
 logger = logging.getLogger(__name__)
 

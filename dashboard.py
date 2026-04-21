@@ -10,7 +10,7 @@ import os
 from dotenv import load_dotenv
 from core.sentiment import SentimentFetcher
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / '.env', override=True)
 
 DECISIONS_LOG = Path("logs/decisions.json")
 PAIR = os.getenv("TRADING_PAIR", "BTC/USDT")
