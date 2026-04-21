@@ -1,14 +1,23 @@
 import json
+import os
+import subprocess
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import requests
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from pathlib import Path
-from datetime import datetime, timedelta
-import time
-import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 from core.sentiment import SentimentFetcher
+from core.profile_manager import (
+    get_active_profile,
+    list_profiles,
+    load_profile,
+    save_current_as_profile,
+)
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / '.env', override=True)
 
@@ -132,6 +141,19 @@ hr { border-color:#1E2130 !important; margin:12px 0 !important; }
 ::-webkit-scrollbar-track { background:#0F1117; }
 ::-webkit-scrollbar-thumb { background:#2A2D3A; border-radius:3px; }
 ::-webkit-scrollbar-thumb:hover { background:#3A4050; }
+
+/* ── Config Panel ─────────────────────────────────────────── */
+.profile-card {
+    background:#1A1D27; border-radius:12px;
+    padding:18px 20px; border:2px solid #2A2D3A;
+}
+.profile-card.active { border-color:#10B981; }
+.active-badge {
+    display:inline-block; background:#10B981; color:#0a1a0a;
+    font-weight:700; font-size:0.75rem; padding:2px 10px;
+    border-radius:20px; margin-left:8px; vertical-align:middle;
+}
+.section-divider { border-top:1px solid #2A2D3A; margin:8px 0 16px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -316,6 +338,60 @@ def _run_backtest_subprocess(capital: float, pair: str, timeframe: str,
         return False, str(e)
 
 
+# ── Config Panel helpers ──────────────────────────────────────────────────────
+
+_ENV_FILE = Path(__file__).resolve().parent / '.env'
+
+
+def _read_env() -> dict:
+    if not _ENV_FILE.exists():
+        return {}
+    return dict(dotenv_values(_ENV_FILE))
+
+
+def _write_env(updates: dict) -> None:
+    lines = _ENV_FILE.read_text(encoding="utf-8").splitlines() if _ENV_FILE.exists() else []
+    remaining = dict(updates)
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            new_lines.append(line)
+            continue
+        key = stripped.partition("=")[0].strip()
+        if key in remaining:
+            new_lines.append(f"{key}={remaining.pop(key)}")
+        else:
+            new_lines.append(line)
+    for key, value in remaining.items():
+        new_lines.append(f"{key}={value}")
+    _ENV_FILE.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+
+def _send_telegram_cfg(text: str) -> bool:
+    env = _read_env()
+    token   = env.get("TELEGRAM_BOT_TOKEN")
+    chat_id = env.get("TELEGRAM_CHAT_ID")
+    if not (token and chat_id):
+        return False
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=10,
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def _env_mtime() -> str:
+    if _ENV_FILE.exists():
+        ts = datetime.fromtimestamp(_ENV_FILE.stat().st_mtime)
+        return ts.strftime("%d %b %Y, %H:%M:%S")
+    return "—"
+
+
 # ── Layout ────────────────────────────────────────────────────────────────────
 
 # ── HTML / chart helpers ──────────────────────────────────────────────────────
@@ -430,7 +506,7 @@ with st.sidebar:
                 st.error(f"Gagal: {e}")
 
     st.divider()
-    st.caption("⚙️ [Buka Config Panel](http://localhost:8502)")
+    st.caption("⚙️ Gunakan tab Config di atas untuk konfigurasi bot")
 
 # ── Health banner (shown if any service DOWN) ─────────────────────────────────
 
@@ -490,7 +566,7 @@ with col_refresh:
         st.cache_data.clear()
         st.rerun()
 
-tab_live, tab_chart, tab_bt = st.tabs(["📊 Live Trading", "📈 Chart", "🔬 Backtesting"])
+tab_live, tab_chart, tab_bt, tab_config = st.tabs(["📊 Live Trading", "📈 Chart", "🔬 Backtesting", "⚙️ Config"])
 
 # ═══════════════════════════════════════════════════════ TAB: Live Trading ════
 
@@ -1127,6 +1203,274 @@ with tab_bt:
             )
         else:
             st.info("Tidak ada trade yang dieksekusi.")
+
+# ═══════════════════════════════════════════════════════ TAB: Config ══════════
+
+with tab_config:
+    st.markdown("### ⚙️ Bot Config Panel")
+    st.caption("Konfigurasi trading bot — perubahan disimpan ke .env dan aktif otomatis.")
+
+    # ── Config Profiles ───────────────────────────────────────────────────────
+    st.subheader("🎛️ Config Profiles")
+    _profiles    = list_profiles()
+    _active_name = get_active_profile()
+
+    if not _profiles:
+        st.info("Belum ada profile. Buat profile pertama di bawah.")
+    else:
+        _pcols = st.columns(len(_profiles))
+        for _i, _prof in enumerate(_profiles):
+            _pname     = _prof.get("name", _prof.get("_file", "?"))
+            _pdesc     = _prof.get("description", "")
+            _is_active = (_active_name == _pname)
+            with _pcols[_i]:
+                _badge    = '<span class="active-badge">AKTIF</span>' if _is_active else ""
+                _card_cls = "profile-card active" if _is_active else "profile-card"
+                st.markdown(
+                    f'<div class="{_card_cls}">'
+                    f'<b>{_pname}</b>{_badge}<br>'
+                    f'<small style="color:#0EA5E9">{_pdesc}</small>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    f"Drawdown max: {_prof.get('MAX_DRAWDOWN_PCT','—')}%  |  "
+                    f"ATR mult: {_prof.get('TRAILING_STOP_ATR_MULTIPLIER','—')}  |  "
+                    f"TF: {_prof.get('TIMEFRAME_SHORT','?')}/{_prof.get('TIMEFRAME_MEDIUM','?')}/{_prof.get('TIMEFRAME_LONG','?')}"
+                )
+                if not _is_active:
+                    _slug = _prof.get("_file", _pname.lower())
+                    if st.button(f"Aktifkan {_pname}", key=f"cfg_activate_{_slug}", use_container_width=True):
+                        try:
+                            load_profile(_slug)
+                            _send_telegram_cfg(
+                                f"🔧 <b>Config profile diubah ke <i>{_pname}</i>.</b>\n"
+                                "Perubahan akan aktif di sesi berikutnya secara otomatis."
+                            )
+                            st.success(f"Profile **{_pname}** diaktifkan. Perubahan aktif otomatis.", icon="✅")
+                            st.cache_data.clear()
+                            time.sleep(0.5)
+                            st.rerun()
+                        except Exception as _e:
+                            st.error(f"Gagal mengaktifkan profile: {_e}")
+                else:
+                    st.success("Profile ini sedang aktif", icon="✅")
+
+    st.markdown("<div class='section-divider'/>", unsafe_allow_html=True)
+
+    with st.expander("💾 Simpan Konfigurasi Saat Ini sebagai Profile Baru"):
+        _p_name = st.text_input("Nama Profile", placeholder="Contoh: My Custom", key="cfg_pname")
+        _p_desc = st.text_input("Deskripsi", placeholder="Singkat tentang strategi ini", key="cfg_pdesc")
+        if st.button("Simpan sebagai Profile Baru", disabled=not _p_name, key="cfg_save_profile"):
+            if _p_name:
+                try:
+                    _out = save_current_as_profile(_p_name, _p_desc)
+                    st.success(f"Profile '{_p_name}' disimpan ke {_out.name}")
+                    time.sleep(0.5)
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"Gagal menyimpan: {_e}")
+
+    st.divider()
+
+    # ── Trading Settings ──────────────────────────────────────────────────────
+    _env = _read_env()
+
+    st.subheader("📈 Trading Settings")
+    _ts_col1, _ts_col2 = st.columns(2)
+
+    with _ts_col1:
+        _pair_opts = ["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT"]
+        _cfg_pair = st.selectbox(
+            "TRADING_PAIR", options=_pair_opts,
+            index=_pair_opts.index(_env.get("TRADING_PAIR", "BTC/USDT"))
+                  if _env.get("TRADING_PAIR", "BTC/USDT") in _pair_opts else 0,
+            key="cfg_pair",
+        )
+        _tf_opts = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+        _cfg_tf_short = st.selectbox(
+            "TIMEFRAME_SHORT", options=_tf_opts,
+            index=_tf_opts.index(_env.get("TIMEFRAME_SHORT", "15m"))
+                  if _env.get("TIMEFRAME_SHORT", "15m") in _tf_opts else 2,
+            key="cfg_tf_short",
+        )
+        _cfg_tf_medium = st.selectbox(
+            "TIMEFRAME_MEDIUM", options=_tf_opts,
+            index=_tf_opts.index(_env.get("TIMEFRAME_MEDIUM", "1h"))
+                  if _env.get("TIMEFRAME_MEDIUM", "1h") in _tf_opts else 4,
+            key="cfg_tf_medium",
+        )
+        _cfg_tf_long = st.selectbox(
+            "TIMEFRAME_LONG", options=_tf_opts,
+            index=_tf_opts.index(_env.get("TIMEFRAME_LONG", "4h"))
+                  if _env.get("TIMEFRAME_LONG", "4h") in _tf_opts else 5,
+            key="cfg_tf_long",
+        )
+
+    with _ts_col2:
+        _cfg_max_dd = st.slider(
+            "MAX_DRAWDOWN_PCT (%)", min_value=5, max_value=30, step=1,
+            value=int(_env.get("MAX_DRAWDOWN_PCT", 10)),
+            key="cfg_max_dd",
+        )
+        _cfg_trailing = st.slider(
+            "TRAILING_STOP_ATR_MULTIPLIER", min_value=1.0, max_value=4.0, step=0.1,
+            value=float(_env.get("TRAILING_STOP_ATR_MULTIPLIER", 2.0)),
+            key="cfg_trailing",
+        )
+
+    st.divider()
+
+    # ── API Keys ──────────────────────────────────────────────────────────────
+    st.subheader("🔑 API Keys")
+    _ak1, _ak2 = st.columns(2)
+
+    with _ak1:
+        _cfg_binance_key    = st.text_input("BINANCE_API_KEY",    value=_env.get("BINANCE_API_KEY", ""),    type="password", key="cfg_bkey")
+        _cfg_binance_secret = st.text_input("BINANCE_SECRET_KEY", value=_env.get("BINANCE_SECRET_KEY", ""), type="password", key="cfg_bsecret")
+        _cfg_anthropic      = st.text_input("ANTHROPIC_API_KEY",  value=_env.get("ANTHROPIC_API_KEY", ""),  type="password", key="cfg_akey")
+
+    with _ak2:
+        _cfg_tg_token   = st.text_input("TELEGRAM_BOT_TOKEN", value=_env.get("TELEGRAM_BOT_TOKEN", ""), type="password", key="cfg_tgtoken")
+        _cfg_tg_chat    = st.text_input("TELEGRAM_CHAT_ID",   value=_env.get("TELEGRAM_CHAT_ID", ""),                    key="cfg_tgchat")
+
+    _cc1, _cc2, _cc3, _cc4 = st.columns(4)
+    with _cc1:
+        if st.button("Test Binance", use_container_width=True, key="cfg_test_binance"):
+            try:
+                import ccxt as _ccxt
+                _ex = _ccxt.binance({"apiKey": _cfg_binance_key, "secret": _cfg_binance_secret})
+                _ex.set_sandbox_mode(True)
+                _ex.fetch_balance()
+                st.success("Binance OK ✓")
+            except Exception as _e:
+                st.error(f"Binance gagal: {str(_e)[:120]}")
+    with _cc2:
+        if st.button("Test Anthropic", use_container_width=True, key="cfg_test_anthropic"):
+            try:
+                import anthropic as _ant
+                _ant.Anthropic(api_key=_cfg_anthropic).messages.create(
+                    model="claude-haiku-4-5-20251001", max_tokens=10,
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+                st.success("Anthropic OK ✓")
+            except Exception as _e:
+                st.error(f"Anthropic gagal: {str(_e)[:120]}")
+    with _cc3:
+        if st.button("Test Telegram", use_container_width=True, key="cfg_test_tg"):
+            try:
+                _r = requests.get(f"https://api.telegram.org/bot{_cfg_tg_token}/getMe", timeout=8)
+                if _r.status_code == 200:
+                    st.success(f"Telegram OK — @{_r.json().get('result',{}).get('username','?')}")
+                else:
+                    st.error(f"Telegram: HTTP {_r.status_code}")
+            except Exception as _e:
+                st.error(f"Telegram gagal: {str(_e)[:120]}")
+    with _cc4:
+        if st.button("Kirim Test Pesan", use_container_width=True, key="cfg_test_tg_msg"):
+            try:
+                _r = requests.post(
+                    f"https://api.telegram.org/bot{_cfg_tg_token}/sendMessage",
+                    json={"chat_id": _cfg_tg_chat, "text": "✅ Test dari Config Panel berhasil!"},
+                    timeout=8,
+                )
+                st.success("Pesan terkirim ✓") if _r.status_code == 200 else st.error(f"HTTP {_r.status_code}")
+            except Exception as _e:
+                st.error(f"Gagal: {str(_e)[:120]}")
+
+    st.divider()
+
+    # ── Risk Management ───────────────────────────────────────────────────────
+    st.subheader("🛡️ Risk Management")
+    _rc1, _rc2 = st.columns(2)
+    with _rc1:
+        _cfg_max_pos = st.slider(
+            "MAX_POSITION_SIZE_PCT (%)", min_value=5, max_value=20, step=1,
+            value=int(_env.get("MAX_POSITION_SIZE_PCT", 20)), key="cfg_maxpos",
+        )
+    with _rc2:
+        _cfg_ens_buy = st.slider(
+            "ENSEMBLE_BUY_THRESHOLD", min_value=0.10, max_value=0.50, step=0.05,
+            value=float(_env.get("ENSEMBLE_BUY_THRESHOLD", 0.30)), format="%.2f", key="cfg_ensbuy",
+        )
+        _cfg_ens_sell = st.slider(
+            "ENSEMBLE_SELL_THRESHOLD", min_value=-0.50, max_value=-0.10, step=0.05,
+            value=float(_env.get("ENSEMBLE_SELL_THRESHOLD", -0.30)), format="%.2f", key="cfg_enssell",
+        )
+
+    st.divider()
+
+    # ── Action Buttons ────────────────────────────────────────────────────────
+    _CFG_DEFAULTS = {
+        "TRADING_PAIR": "BTC/USDT", "TIMEFRAME_SHORT": "15m",
+        "TIMEFRAME_MEDIUM": "1h",   "TIMEFRAME_LONG":  "4h",
+        "MAX_DRAWDOWN_PCT": "10",   "TRAILING_STOP_ATR_MULTIPLIER": "2.0",
+        "MAX_POSITION_SIZE_PCT": "20",
+        "ENSEMBLE_BUY_THRESHOLD": "0.30", "ENSEMBLE_SELL_THRESHOLD": "-0.30",
+    }
+
+    _ba1, _ba2, _ba3 = st.columns(3)
+    with _ba1:
+        if st.button("💾 Simpan Konfigurasi", type="primary", use_container_width=True, key="cfg_save"):
+            _write_env({
+                "TRADING_PAIR":                 _cfg_pair,
+                "TIMEFRAME_SHORT":              _cfg_tf_short,
+                "TIMEFRAME_MEDIUM":             _cfg_tf_medium,
+                "TIMEFRAME_LONG":               _cfg_tf_long,
+                "MAX_DRAWDOWN_PCT":             str(_cfg_max_dd),
+                "TRAILING_STOP_ATR_MULTIPLIER": f"{_cfg_trailing:.1f}",
+                "BINANCE_API_KEY":              _cfg_binance_key,
+                "BINANCE_SECRET_KEY":           _cfg_binance_secret,
+                "ANTHROPIC_API_KEY":            _cfg_anthropic,
+                "TELEGRAM_BOT_TOKEN":           _cfg_tg_token,
+                "TELEGRAM_CHAT_ID":             _cfg_tg_chat,
+                "MAX_POSITION_SIZE_PCT":        str(_cfg_max_pos),
+                "ENSEMBLE_BUY_THRESHOLD":       f"{_cfg_ens_buy:.2f}",
+                "ENSEMBLE_SELL_THRESHOLD":      f"{_cfg_ens_sell:.2f}",
+            })
+            st.success("✅ Konfigurasi disimpan. Perubahan aktif di sesi berikutnya otomatis.", icon="💾")
+    with _ba2:
+        if st.button("🔄 Reset ke Default", use_container_width=True, key="cfg_reset"):
+            _write_env(_CFG_DEFAULTS)
+            st.info("Konfigurasi direset ke default.", icon="🔄")
+            time.sleep(0.5)
+            st.rerun()
+    with _ba3:
+        if st.button("🔁 Restart Bot", use_container_width=True, type="secondary", key="cfg_restart"):
+            st.warning("Fitur restart memerlukan bot berjalan via bot_runner.py.")
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", "python.exe", "/FI", "WINDOWTITLE eq main*"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                st.info("Signal restart dikirim. bot_runner akan restart dalam 30 detik.")
+            except Exception as _e:
+                st.error(f"Gagal: {_e}")
+
+    st.divider()
+
+    # ── Status ────────────────────────────────────────────────────────────────
+    st.subheader("📡 Status")
+    _sc1, _sc2, _sc3 = st.columns(3)
+    with _sc1:
+        st.metric("Profile Aktif", get_active_profile() or "—")
+    with _sc2:
+        st.metric(".env Terakhir Diubah", _env_mtime())
+    with _sc3:
+        _log_f = Path("logs/bot.log")
+        if _log_f.exists():
+            _age = time.time() - _log_f.stat().st_mtime
+            if _age < 300:
+                st.markdown("**Status Bot:** <span style='color:#10B981'>● Running</span>", unsafe_allow_html=True)
+            elif _age < 3600:
+                st.markdown("**Status Bot:** <span style='color:#F59E0B'>● Idle</span>", unsafe_allow_html=True)
+            else:
+                st.markdown("**Status Bot:** <span style='color:#EF4444'>● Stopped</span>", unsafe_allow_html=True)
+        else:
+            st.markdown("**Status Bot:** <span style='color:#475569'>● Unknown</span>", unsafe_allow_html=True)
+
+    if st.button("🔄 Refresh Status", key="cfg_refresh_status"):
+        st.rerun()
 
 # ── Auto-refresh ──────────────────────────────────────────────────────────────
 
