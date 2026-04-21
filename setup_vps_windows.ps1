@@ -36,15 +36,49 @@ Write-Host ""
 # 1. Install Python via winget
 # =============================================================================
 Write-Step "Mengecek Python 3.11..."
-$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-if ($pythonCmd) {
-    $ver = python --version 2>&1
-    Write-Ok "Python sudah terinstall: $ver"
+
+# Cari Python di lokasi umum (hindari alias Microsoft Store)
+$PYTHON_EXE = $null
+$pythonPaths = @(
+    "C:\Python311\python.exe",
+    "C:\Program Files\Python311\python.exe",
+    "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
+    "$env:LOCALAPPDATA\Programs\Python\Python311-32\python.exe"
+)
+foreach ($p in $pythonPaths) {
+    if (Test-Path $p) { $PYTHON_EXE = $p; break }
+}
+
+# Coba py launcher (lebih reliable dari 'python' di Windows)
+if (-not $PYTHON_EXE) {
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        $testVer = py -3.11 --version 2>&1
+        if ($testVer -match "3\.11") { $PYTHON_EXE = "py -3.11" }
+    }
+}
+
+if ($PYTHON_EXE) {
+    Write-Ok "Python ditemukan: $PYTHON_EXE"
 } else {
     Write-Step "Install Python 3.11 via winget..."
     winget install -e --id Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
     $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
-    Write-Ok "Python terinstall"
+    Start-Sleep -Seconds 3
+
+    # Cari lagi setelah install
+    foreach ($p in $pythonPaths) {
+        if (Test-Path $p) { $PYTHON_EXE = $p; break }
+    }
+    if (-not $PYTHON_EXE) {
+        $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+        if ($pyLauncher) { $PYTHON_EXE = "py -3.11" }
+    }
+    if (-not $PYTHON_EXE) {
+        Write-Err "Python tidak ditemukan setelah install. Restart PowerShell dan coba lagi."
+        exit 1
+    }
+    Write-Ok "Python terinstall: $PYTHON_EXE"
 }
 
 # =============================================================================
@@ -80,7 +114,11 @@ Write-Ok "Repository siap di $INSTALL_DIR"
 # =============================================================================
 Write-Step "Setup Python virtual environment..."
 if (-NOT (Test-Path "$INSTALL_DIR\venv")) {
-    python -m venv "$INSTALL_DIR\venv"
+    if ($PYTHON_EXE -eq "py -3.11") {
+        py -3.11 -m venv "$INSTALL_DIR\venv"
+    } else {
+        & $PYTHON_EXE -m venv "$INSTALL_DIR\venv"
+    }
 }
 & "$INSTALL_DIR\venv\Scripts\python.exe" -m pip install --upgrade pip -q
 & "$INSTALL_DIR\venv\Scripts\pip.exe" install -r "$INSTALL_DIR\requirements.txt" -q
