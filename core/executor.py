@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from core.market_data import get_exchange, get_futures_exchange
 from core.state_persistence import store
